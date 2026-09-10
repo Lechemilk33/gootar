@@ -67,6 +67,15 @@ export class NamRig {
   }
 
   /**
+   * Metadata for whatever is currently audible. Output normalisation depends
+   * on the model's self-reported loudness, so this has to follow the switch.
+   */
+  get activeInfo(): NamModelInfo | null {
+    if (this.activeKey === null) return null;
+    return this.slots.get(this.activeKey)?.info ?? null;
+  }
+
+  /**
    * Parse and load a model into its own node, silent and ready.
    *
    * Call this for every model you might want to hear *before* you start

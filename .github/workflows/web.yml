@@ -2,7 +2,6 @@ name: web
 
 on:
   push:
-    branches: ["**"]
     paths:
       - "apps/web/**"
       - "packages/**"
@@ -17,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The end-to-end audio check needs a real .nam file, and the ones
+          # NeuralAudio ships are the only models in this repo.
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -33,6 +36,16 @@ jobs:
 
       - name: Fail if the emitted JSON Schema is stale
         # The C++ side reads the committed JSON Schema. If it drifts from the
-        # zod source of truth, the two halves silently disagree about the
-        # preset format — catch that here rather than in the audio thread.
+        # zod source of truth the two halves silently disagree about the preset
+        # format - catch that here rather than in the audio thread.
         run: git diff --exit-code -- packages/preset-schema/schema
+
+      - name: Install a browser for the audio check
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Prove NAM actually runs in a browser
+        # Loads a real capture into the wasm engine and inspects the rendered
+        # samples. The whole web half rests on this working.
+        run: node scripts/verify-wasm.mjs
+        working-directory: apps/web

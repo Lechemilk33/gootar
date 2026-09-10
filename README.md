@@ -16,36 +16,46 @@ compare them — the stock plugin makes you file-browse one at a time.
 
 ## Status
 
+Both halves work.
+
 | | |
 |---|---|
-| Preset schema | working, tested, emits JSON Schema |
-| Web librarian | scaffold builds and deploys; imports + hashes models, gapless A/B wired |
-| Native player | model handover implemented and sanitiser-clean; no JUCE app yet |
+| Preset schema | zod source of truth, 9 tests, emits JSON Schema for the C++ side |
+| Web librarian | imports + hashes + tags models, gapless A/B against a DI loop, preset save/load. NAM-in-the-browser **verified end to end** against a real capture |
+| Native player | full chain (gate / model / tone stack / IR / DC blocker / levels), model browser, hot-swap, preset I/O. Standalone **and** VST3 build |
+| Hot-swap | 20k swaps against a live audio thread, clean under TSan and ASan/UBSan |
+
+**[How to use it → `docs/USAGE.md`](docs/USAGE.md)**
 
 ## Quick start
 
 ```bash
+git clone --recurse-submodules https://github.com/Lechemilk33/gootar
+cd gootar
+
 npm install
 npm run build        # schema, then web
 npm run dev          # librarian at localhost:3000
-npm test             # schema tests
 ```
 
-Native side:
+Native side (no compiler on your machine? CI builds the `.exe` — see
+[USAGE](docs/USAGE.md)):
 
 ```bash
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build
+cmake --build native/build --parallel
 ctest --test-dir native/build --output-on-failure
 ```
 
-## Read this first
+`ctest` runs the concurrency stress test and the whole signal chain against the
+real `.nam` files NeuralAudio ships — WaveNet Standard/Nano/Feather, A2, and
+two LSTMs.
 
-**[`docs/AUDIT.md`](docs/AUDIT.md)** — what was verified against upstream
-source, and the four places the original plan needed changing. Most important:
-hot-swap is architecture rather than a late milestone, and models must be
-identified by content hash rather than path or share-by-link cannot work.
+## Docs
 
+- **[`docs/USAGE.md`](docs/USAGE.md)** — how to actually use it, start to finish
+- [`docs/AUDIT.md`](docs/AUDIT.md) — what was verified against upstream source,
+  and the places the original plan needed changing
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the two halves fit
 - [`docs/SIGNAL-CHAIN.md`](docs/SIGNAL-CHAIN.md) — the chain, transcribed from
   the stock plugin's `ProcessBlock`, with exact parameter ranges
@@ -53,10 +63,17 @@ identified by content hash rather than path or share-by-link cannot work.
 ## Layout
 
 ```
-packages/preset-schema/   zod schemas → types + JSON Schema; the shared format
-apps/web/                 Next.js librarian
-native/                   JUCE player + the lock-free model swapper
-docs/                     audit, architecture, signal chain
+packages/preset-schema/   zod schemas -> types + JSON Schema; the shared format
+apps/web/
+  lib/audio/nam-rig.ts    gapless A/B over preloaded wasm NAM nodes
+  lib/audio/chain.ts      the signal chain in Web Audio
+  lib/library/            hashing, .nam parsing, IndexedDB
+native/
+  src/ModelSwapper.h      lock-free handover to the audio thread
+  src/dsp/                the whole chain, with no JUCE in it
+  src/app/                JUCE shell: browser UI, presets, library scan
+  libs/                   JUCE, NeuralAudio, AudioDSPTools (submodules)
+docs/                     usage, audit, architecture, signal chain
 ```
 
 ## Deploying the web half
@@ -68,16 +85,21 @@ the shared schema package will not be built before the app that imports it.
 
 ## Milestones
 
-1. Standalone app, ASIO in → out passthrough
-2. Load one `.nam` and hear it — **on top of `ModelSwapper`, not around it**
-3. IR convolution
-4. Gate + EQ + levels, in the order in `SIGNAL-CHAIN.md`
-5. Preset save/load
-6. Model browser + hot-swap while playing — the product
-7. Chain multiple models (pedal → amp)
+1. ~~Standalone app, audio in → out~~ done
+2. ~~Load a `.nam` and hear it~~ done, on top of `ModelSwapper`
+3. ~~IR convolution~~ done
+4. ~~Gate + EQ + levels in the right order~~ done
+5. ~~Preset save/load~~ done
+6. ~~Model browser + hot-swap while playing~~ done — the product
+7. Chain multiple models (pedal → amp) — the preset format already carries an
+   array of model slots, so this is a UI and engine change, not a format change
 
-VST3 is no longer a milestone: JUCE builds Standalone and VST3 as two formats of
-one target, enabled from the start.
+VST3 was never a milestone in the end: JUCE builds Standalone and VST3 as two
+formats of one target, on from the start.
+
+Not done: ASIO is off in CI because the SDK is a separate download
+([USAGE](docs/USAGE.md) says how to turn it on), and the librarian is
+local-first with no share-by-link backend.
 
 ## Built on
 

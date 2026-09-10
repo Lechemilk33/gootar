@@ -1,0 +1,9 @@
+[submodule "native/libs/NeuralAudio"]
+	path = native/libs/NeuralAudio
+	url = https://github.com/mikeoliphant/NeuralAudio
+[submodule "native/libs/AudioDSPTools"]
+	path = native/libs/AudioDSPTools
+	url = https://github.com/sdatkinson/AudioDSPTools
+[submodule "native/libs/JUCE"]
+	path = native/libs/JUCE
+	url = https://github.com/juce-framework/JUCE

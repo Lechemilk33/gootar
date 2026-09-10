@@ -1,95 +1,92 @@
 name: native
 
-# Partly a stub: the Windows job is wired up and ready, but the player itself
-# has no sources yet, so it produces no binary until JUCE, NeuralAudio and
-# src/PluginProcessor.cpp are in place. The sanitizer job below is real today.
-#
-# Why build here at all: this machine has no compiler installed, so CI produces
-# the .exe/.vst3 as a downloadable artifact.
-#
-# NOTE: CI is right for *release* builds. It is a poor loop for developing
-# real-time audio — see docs/AUDIT.md, "The one local install you cannot avoid".
-
 on:
   push:
     paths:
       - "native/**"
       - ".github/workflows/native.yml"
+  pull_request:
+    paths:
+      - "native/**"
   workflow_dispatch:
 
 jobs:
-  # The model handover is the one piece of the native design that is hard to
-  # get right and impossible to eyeball. It has no third-party dependencies, so
-  # it can be checked properly on Linux under sanitizers MSVC does not offer.
-  swapper:
-    name: model swapper (sanitizers)
+  # The DSP has no JUCE in it, so it can be checked properly on Linux under
+  # sanitisers MSVC does not offer. This is where hot-swap correctness is
+  # actually proven: 20k model swaps against a live audio thread, plus the
+  # whole chain run against the real .nam files NeuralAudio ships.
+  engine:
+    name: engine + sanitizers
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Build and run
+      - name: Install audio build deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
+
+      - name: Build and test
         working-directory: native
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGOOTAR_BUILD_APP=OFF
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure
 
       - name: ThreadSanitizer
         working-directory: native
         run: |
-          g++ -std=c++20 -O1 -g -fsanitize=thread -Isrc \
-            src/ModelSwapperTest.cpp -o tsan -pthread
-          ./tsan
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DGOOTAR_BUILD_APP=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build-tsan --parallel
+          ./build-tsan/gootar_model_swapper_test
+          ./build-tsan/gootar_engine_test
 
       - name: AddressSanitizer + UBSan
         working-directory: native
         run: |
-          g++ -std=c++20 -O1 -g -fsanitize=address,undefined -Isrc \
-            src/ModelSwapperTest.cpp -o asan -pthread
-          ./asan
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DGOOTAR_BUILD_APP=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -g -O1" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-asan --parallel
+          ./build-asan/gootar_model_swapper_test
+          ./build-asan/gootar_engine_test
 
-  build:
+  # Produces the binaries to actually download and play through. This exists
+  # because the machine this project is developed on has no compiler.
+  windows:
     name: windows build
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
-          # JUCE and NeuralAudio come in as submodules once they are added:
-          #   git submodule add https://github.com/juce-framework/JUCE native/libs/JUCE
-          #   git submodule add https://github.com/mikeoliphant/NeuralAudio native/libs/NeuralAudio
           submodules: recursive
 
-      - name: Cache CMake build tree
-        uses: actions/cache@v4
-        with:
-          path: native/build
-          key: ${{ runner.os }}-cmake-${{ hashFiles('native/CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-cmake-
-
-      # ASIO needs Steinberg's SDK, which is a separate download and is not
-      # committed here. Drop it in native/libs/asiosdk and flip
-      # GOOTAR_ENABLE_ASIO=ON. Without it the build still produces a working
-      # WASAPI standalone, which is enough to prove the DSP is correct.
+      # ASIO needs Steinberg's SDK, a separate download that is not committed
+      # here. When it is absent the build still produces a working WASAPI
+      # standalone - enough to confirm the DSP, not enough to play through.
+      # To get ASIO: drop the SDK in native/libs/asiosdk and flip this on.
       - name: Configure
         run: >
           cmake -S native -B native/build
           -G "Visual Studio 17 2022" -A x64
-          -DCMAKE_BUILD_TYPE=Release
           -DGOOTAR_ENABLE_ASIO=OFF
 
       - name: Build
         run: cmake --build native/build --config Release --parallel
 
-      - name: Run the swapper test on Windows too
+      - name: Test
         run: ctest --test-dir native/build -C Release --output-on-failure
 
-      - name: Upload artifacts
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: gootar-windows-x64
           path: |
-            native/build/**/Release/**/*.exe
-            native/build/**/Release/**/*.vst3
+            native/build/GootarPlayer_artefacts/Release/Standalone/*.exe
+            native/build/GootarPlayer_artefacts/Release/VST3/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
