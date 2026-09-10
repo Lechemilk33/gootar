@@ -69,10 +69,17 @@ jobs:
       # here. When it is absent the build still produces a working WASAPI
       # standalone - enough to confirm the DSP, not enough to play through.
       # To get ASIO: drop the SDK in native/libs/asiosdk and flip this on.
+      #
+      # The generator is deliberately NOT pinned. Naming a specific Visual
+      # Studio ("Visual Studio 17 2022") breaks the moment the runner image
+      # ships a newer one - which is exactly what happened. CMake picks the
+      # newest Visual Studio actually installed, so this keeps working as the
+      # image moves; -A x64 still applies, since every Windows runner has some
+      # Visual Studio and therefore a VS generator.
       - name: Configure
         run: >
           cmake -S native -B native/build
-          -G "Visual Studio 17 2022" -A x64
+          -A x64
           -DGOOTAR_ENABLE_ASIO=OFF
 
       - name: Build

@@ -27,6 +27,10 @@ Both halves work.
 
 **[How to use it → `docs/USAGE.md`](docs/USAGE.md)**
 
+![The native player](docs/images/player.png)
+
+![The web librarian](docs/images/librarian.png)
+
 ## Quick start
 
 ```bash
