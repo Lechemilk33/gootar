@@ -8,6 +8,9 @@
  * until the whole workflow times out - which looks identical to "the tests are
  * slow" from the outside.
  *
+ * ctest --timeout bounds that too, but a timeout tells you nothing; a real
+ * crash exit code tells you what happened.
+ *
  * No-op everywhere else.
  */
 #if defined(_WIN32)
@@ -26,22 +29,34 @@
     #define WIN32_LEAN_AND_MEAN
   #endif
 
-  #include <windows.h>
-  #include <crtdbg.h>
+  #include <windows.h>   // SetErrorMode, SEM_*
+  #include <cstdlib>     // _set_abort_behavior, _WRITE_ABORT_MSG, _CALL_REPORTFAULT
+
+  #if defined(_DEBUG)
+    // _CrtSetReportMode and friends exist only in the debug CRT. Including
+    // crtdbg.h unconditionally happens to work, but calling into it from a
+    // release build is not something to rely on.
+    #include <crtdbg.h>
+  #endif
 
   inline void silenceCrashDialogs()
   {
+      // Stops the "program has stopped working" box for faults and missing DLLs.
       SetErrorMode (SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
+      // abort() takes a different path and would still summon Windows Error
+      // Reporting without this.
       _set_abort_behavior (0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 
-      // Written out rather than looped: these are macros, and a range-for over
-      // a braced list of them is more trouble than three lines are worth.
+  #if defined(_DEBUG)
+      // Send assert output to stderr instead of a modal dialog.
       _CrtSetReportMode (_CRT_WARN, _CRTDBG_MODE_FILE);
       _CrtSetReportFile (_CRT_WARN, _CRTDBG_FILE_STDERR);
       _CrtSetReportMode (_CRT_ERROR, _CRTDBG_MODE_FILE);
       _CrtSetReportFile (_CRT_ERROR, _CRTDBG_FILE_STDERR);
       _CrtSetReportMode (_CRT_ASSERT, _CRTDBG_MODE_FILE);
       _CrtSetReportFile (_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+  #endif
   }
 
 #else
