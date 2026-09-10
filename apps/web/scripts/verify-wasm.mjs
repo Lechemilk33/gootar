@@ -206,10 +206,27 @@ const main = async () => {
   }
 };
 
-withTimeout(main(), OVERALL_TIMEOUT_MS, "wasm verification").catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-  // The server child keeps the process alive; the exit handler kills it, but
-  // force the exit so a wedged browser cannot hold this open either.
-  process.exit(1);
-});
+/**
+ * Exit explicitly, on success as well as on failure.
+ *
+ * This is not belt and braces - without it the script hangs forever having
+ * already PASSED. `next start` runs as a child process, and an unreffed child
+ * keeps Node's event loop alive, so main() resolves, the result prints, and
+ * then nothing happens. The overall timeout cannot save it either: the race
+ * has already settled, so its rejection goes nowhere.
+ *
+ * It only ever looked fine locally because it was run wrapped in `timeout`,
+ * which killed it from the outside. In CI nothing did, and the job sat there
+ * until the runner gave up 25 minutes later.
+ */
+const finish = (code) => {
+  cleanup();
+  process.exit(code);
+};
+
+withTimeout(main(), OVERALL_TIMEOUT_MS, "wasm verification")
+  .then(() => finish(process.exitCode ?? 0))
+  .catch((error) => {
+    console.error(error);
+    finish(1);
+  });
