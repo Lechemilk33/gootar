@@ -3,12 +3,16 @@
 A preset-centric [Neural Amp Modeler](https://www.neuralampmodeler.com/) rig, in
 two halves that share one preset format.
 
-**Web librarian** — organise, tag, search and audition a library of `.nam`
-captures against a DI loop, and A/B them without a dropout. Runs NAM as
-WebAssembly in an AudioWorklet. Deploys to Vercel.
+**Everything runs on your machine.** Nothing is uploaded, nothing is served to
+the internet, and no audio ever leaves the computer.
 
-**Native player** — the real-time engine you plug a guitar into. JUCE, ASIO,
-NeuralAudio. Hot-swaps models without interrupting playing.
+**Player** — the real-time app you plug a guitar into. JUCE, ASIO,
+NeuralAudio. Hot-swaps captures without interrupting playing.
+
+**Librarian** — organise, tag, search and A/B your captures against a recorded
+DI loop. It uses a browser as its window and runs at `127.0.0.1`, but it is a
+local program: the NAM engine runs as WebAssembly inside the page, on your CPU,
+and the only file it ever fetches is one it loaded from your own disk.
 
 The gap it targets: TONE3000 has ~493 model packs and 450k+ downloads. People
 accumulate hundreds of `.nam` files and have no way to organise, audition or
@@ -21,8 +25,8 @@ Both halves work.
 | | |
 |---|---|
 | Preset schema | zod source of truth, 9 tests, emits JSON Schema for the C++ side |
-| Web librarian | imports + hashes + tags models, gapless A/B against a DI loop, preset save/load. NAM-in-the-browser **verified end to end** against a real capture |
-| Native player | full chain (gate / model / tone stack / IR / DC blocker / levels), model browser, hot-swap, preset I/O. Standalone **and** VST3 build |
+| Librarian (local UI) | imports + hashes + tags captures, gapless A/B against a DI loop, preset save/load. NAM-in-the-page **verified end to end** against a real capture |
+| Player | full chain (gate / model / tone stack / IR / DC blocker / levels), model browser, hot-swap, preset I/O. Standalone **and** VST3 build |
 | Signal chain | an ordered list of blocks, not a fixed sequence: reorder it, or run two captures in series, without a rewrite |
 | Tuner | MPM pitch detection off the clean input, ±cents readout |
 | Hot-swap | 20k swaps against a live audio thread, clean under TSan and ASan/UBSan |
@@ -47,10 +51,15 @@ Installs what is missing, lists your ASIO drivers, finds your captures, builds
 the player and the VST3, runs the tests. See
 [`docs/DEV-SETUP.md`](docs/DEV-SETUP.md).
 
-**Anywhere**, by hand:
+Then:
+
+- **`librarian.bat`** — starts the librarian UI and opens it
+- `native\build\GootarPlayer_artefacts\Release\Standalone\Gootar Player.exe`
+
+**By hand, any platform:**
 
 ```bash
-npm install && npm run build && npm run dev   # librarian on :3000
+npm install && npm run dev                    # librarian on 127.0.0.1:3000
 
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
 cmake --build native/build --parallel
@@ -77,7 +86,7 @@ two LSTMs.
 ```
 packages/preset-schema/   zod schemas -> types + JSON Schema; the shared format
 apps/web/
-  lib/audio/nam-rig.ts    gapless A/B over preloaded wasm NAM nodes
+  lib/audio/nam-rig.ts    gapless A/B over preloaded wasm NAM nodes (all local)
   lib/audio/chain.ts      the signal chain in Web Audio
   lib/library/            hashing, .nam parsing, IndexedDB
 native/
@@ -88,12 +97,14 @@ native/
 docs/                     usage, audit, architecture, signal chain
 ```
 
-## Deploying the web half
+## Nothing phones home
 
-The repo root carries a `vercel.json` that builds the workspace in order
-(schema first, then the app) and points Vercel at `apps/web/.next`. Import the
-repo with **Root Directory left at the repository root** — not `apps/web`, or
-the shared schema package will not be built before the app that imports it.
+- No remote URLs anywhere in the UI source; the only asset it loads is the NAM
+  engine, served from your own disk.
+- Next.js telemetry is off — the npm scripts set `NEXT_TELEMETRY_DISABLED`, so
+  it applies on every machine rather than depending on someone remembering.
+- Captures, IRs, tags and presets stay on disk and in your browser's local
+  storage. There is no account, no backend and no database.
 
 ## Milestones
 

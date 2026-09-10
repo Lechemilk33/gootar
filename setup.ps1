@@ -243,14 +243,19 @@ else { Write-Ok 'tests passed' }
 
 # --- web librarian ---------------------------------------------------------
 
-Write-Head 'Web librarian'
+Write-Head 'Librarian UI'
 
 Push-Location $root
 if (-not (Test-Path (Join-Path $root 'node_modules'))) {
-    Write-Info 'installing web dependencies...'
+    Write-Info 'installing UI dependencies...'
     & npm install --no-audit --no-fund
 }
-if ($LASTEXITCODE -eq 0) { Write-Ok 'web dependencies ready' }
+if ($LASTEXITCODE -eq 0) { Write-Ok 'UI dependencies ready' }
+
+# Next.js reports anonymous usage by default. This is a local tool; it should
+# not be talking to anyone. The npm scripts set this too - belt and braces.
+& npx next telemetry disable 2>&1 | Out-Null
+Write-Ok 'telemetry disabled'
 Pop-Location
 
 # --- done ------------------------------------------------------------------

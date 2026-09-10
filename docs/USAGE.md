@@ -111,30 +111,30 @@ That same file is what the librarian reads and writes.
 
 ---
 
-## 5. The librarian (web)
+## 5. The librarian
 
 For organising, tagging and comparing — the stuff that's miserable to do while
 holding a guitar.
 
-### Run it locally
+It uses a browser as its window, but it is a **local program**. It runs at
+`127.0.0.1` — your own machine talking to itself — and the amp modelling runs
+on your CPU inside the page. Nothing is uploaded and nothing is served to the
+internet.
+
+### Start it
+
+Double-click **`librarian.bat`**, or:
 
 ```bash
-npm install
-npm run build
-npm run dev          # http://localhost:3000
+npm run dev          # then open http://127.0.0.1:3000
 ```
 
-### Or deploy it
-
-Import the repo at [vercel.com/new](https://vercel.com/new). Leave **Root
-Directory** at the repository root — `vercel.json` handles the rest. Don't set
-it to `apps/web`, or the shared schema package won't be built before the app
-that imports it.
+Leave that window open while you use it; closing it stops the UI.
 
 ### Using it
 
 1. **Import .nam files** — select them (or a whole folder's worth). They're
-   hashed and parsed in your browser. **Nothing is uploaded.**
+   hashed and parsed on the spot, on your machine.
 2. **Load DI loop** — a dry guitar `.wav` you recorded. This is what you'll
    audition against.
 3. **Preload** — loads every visible model into its own audio node.

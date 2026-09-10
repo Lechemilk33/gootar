@@ -4,8 +4,10 @@ Two halves, one preset format, and one rule that makes them fit together:
 **models are identified by the hash of their bytes, never by their path.**
 
 ```
+  Both halves run on your machine. Nothing is uploaded, nothing is hosted.
+
         ┌──────────────────────────────┐     ┌───────────────────────────────┐
-        │  WEB LIBRARIAN (Vercel)      │     │  NATIVE PLAYER (Windows)      │
+        │  LIBRARIAN (local, 127.0.0.1)│     │  PLAYER (local, Windows)      │
         │  Next.js + NAM wasm          │     │  JUCE + NeuralAudio + ASIO    │
         │                              │     │                               │
         │  organise · tag · search     │     │  plug a guitar in             │
@@ -51,7 +53,7 @@ and honest "model missing" state instead of a silent wrong sound.
 
 ```
 packages/preset-schema/   zod schemas, shared types, emitted JSON Schema
-apps/web/                 Next.js librarian → Vercel
+apps/web/                 Next.js librarian, served locally
   lib/audio/nam-rig.ts    gapless A/B over preloaded wasm NAM nodes
   lib/library/ingest.ts   hash + parse .nam files in the browser
 native/                   JUCE player

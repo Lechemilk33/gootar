@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "predev": "node scripts/copy-nam-assets.mjs",
-    "dev": "next dev",
+    "dev": "node scripts/run-next.mjs dev",
     "prebuild": "node scripts/copy-nam-assets.mjs",
-    "build": "next build",
-    "start": "next start",
+    "build": "node scripts/run-next.mjs build",
+    "start": "node scripts/run-next.mjs start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
