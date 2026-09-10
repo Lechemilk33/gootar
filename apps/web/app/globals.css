@@ -1,0 +1,89 @@
+:root {
+  --bg: #0e1013;
+  --panel: #171a1f;
+  --panel-2: #1e2229;
+  --line: #2a2f38;
+  --text: #e6e8ec;
+  --muted: #8b93a1;
+  --accent: #ff8a3d;
+  --accent-dim: #46301f;
+  --ok: #4ade80;
+  --err: #f87171;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+
+header h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+header p { margin: 0 0 28px; color: var(--muted); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.list { list-style: none; margin: 0; padding: 0; }
+.item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+}
+.item.active { border-color: var(--accent); }
+.item .name { font-weight: 600; }
+.item .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.item .spacer { margin-left: auto; }
+
+code.hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.empty { color: var(--muted); padding: 8px 0; }
+.err { color: var(--err); }
+.ok { color: var(--ok); }
+.hint { color: var(--muted); font-size: 12px; margin-top: 10px; }

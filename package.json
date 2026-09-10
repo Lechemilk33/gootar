@@ -1,0 +1,20 @@
+{
+  "name": "gootar",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Preset-centric Neural Amp Modeler rig: web librarian + native ASIO player",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@gootar/preset-schema && npm run build --workspace=@gootar/web",
+    "build:schema": "npm run build --workspace=@gootar/preset-schema",
+    "dev": "npm run dev --workspace=@gootar/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

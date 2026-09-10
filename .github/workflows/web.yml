@@ -1,0 +1,38 @@
+name: web
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/web/**"
+      - "packages/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/web.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test the shared preset schema
+        run: npm test --workspace=@gootar/preset-schema
+
+      - name: Build schema + web
+        run: npm run build
+
+      - name: Fail if the emitted JSON Schema is stale
+        # The C++ side reads the committed JSON Schema. If it drifts from the
+        # zod source of truth, the two halves silently disagree about the
+        # preset format — catch that here rather than in the audio thread.
+        run: git diff --exit-code -- packages/preset-schema/schema

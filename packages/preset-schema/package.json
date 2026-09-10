@@ -1,0 +1,30 @@
+{
+  "name": "@gootar/preset-schema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Preset + model-identity format shared by the Gootar web librarian and native player",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema/gootar-preset-v1.schema.json": "./schema/gootar-preset-v1.schema.json"
+  },
+  "files": ["dist", "schema"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run emit:jsonschema",
+    "emit:jsonschema": "node --experimental-strip-types scripts/emit-json-schema.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types --test src/*.test.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}
