@@ -25,6 +25,11 @@ find_package(Threads REQUIRED)
 add_executable(gootar_model_swapper_test src/ModelSwapperTest.cpp)
 target_include_directories(gootar_model_swapper_test PRIVATE src)
 target_link_libraries(gootar_model_swapper_test PRIVATE Threads::Threads)
+if(WIN32)
+  # <windows.h> defines min/max as macros unless told not to, which breaks
+  # every std::max in the file with an error that points somewhere else.
+  target_compile_definitions(gootar_model_swapper_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 enable_testing()
 add_test(NAME model_swapper COMMAND gootar_model_swapper_test)
@@ -74,6 +79,9 @@ if(EXISTS "${GOOTAR_NA}/CMakeLists.txt" AND EXISTS "${GOOTAR_ADT}/dsp/dsp.cpp")
 
   add_executable(gootar_engine_test src/EngineTest.cpp)
   target_link_libraries(gootar_engine_test PRIVATE gootar_engine)
+  if(WIN32)
+    target_compile_definitions(gootar_engine_test PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+  endif()
   target_compile_definitions(gootar_engine_test PRIVATE
     GOOTAR_TEST_MODEL_DIR="${GOOTAR_NA}/Utils/Models")
 
