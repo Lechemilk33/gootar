@@ -12,6 +12,7 @@
  * Run under -fsanitize=thread and -fsanitize=address,undefined to check the
  * concurrency claims rather than trust them.
  */
+#include "TestPlatform.h"
 #include "dsp/ChainSpec.h"
 #include "dsp/GootarEngine.h"
 
@@ -485,10 +486,160 @@ void testChainEditing()
     }
 }
 
+
+void testPedals()
+{
+    std::printf ("\npedals\n");
+
+    const auto tone = makeSine (kBlock * 400, 220.0, 0.15f);
+
+    // --- drive: pushes level up and adds harmonics -------------------------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto id = engine.addBlock (gootar::BlockType::Drive, 1);
+        check (! id.empty(), "a drive pedal can be added to the chain");
+
+        engine.setBlockParam (id, "drive", 0.0f);
+        runBlocks (engine, tone);
+        const double clean = rms (runBlocks (engine, tone), kBlock * 8);
+
+        engine.setBlockParam (id, "drive", 9.0f);
+        runBlocks (engine, tone);
+        const auto driven = runBlocks (engine, tone);
+        const double hot = rms (driven, kBlock * 8);
+
+        check (allFinite (driven), "drive output is finite");
+        check (hot > clean * 1.2, "turning drive up makes it louder and harder");
+        check (maxJump (driven) < 1.0, "drive does not produce discontinuities");
+    }
+
+    // --- compressor: reduces the range between quiet and loud --------------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto id = engine.addBlock (gootar::BlockType::Compressor, 1);
+        engine.setBlockParam (id, "threshold", -30.0f);
+        engine.setBlockParam (id, "ratio", 8.0f);
+        engine.setBlockParam (id, "attack", 1.0f);
+
+        const auto quiet = makeSine (kBlock * 300, 220.0, 0.05f);
+        const auto loud  = makeSine (kBlock * 300, 220.0, 0.50f);
+
+        const double quietOut = rms (runBlocks (engine, quiet), kBlock * 20);
+        const double loudOut  = rms (runBlocks (engine, loud),  kBlock * 20);
+
+        // 10x in should come out as much less than 10x.
+        const double ratioOut = loudOut / std::max (1e-9, quietOut);
+        check (ratioOut < 6.0, "compressor narrows a 10x level difference");
+        check (ratioOut > 1.0, "compressor does not invert or flatten completely");
+    }
+
+    // --- delay: produces a repeat, and the tail outlives the input ---------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto id = engine.addBlock (gootar::BlockType::Delay, 1);
+        engine.setBlockParam (id, "time", 100.0f);
+        engine.setBlockParam (id, "feedback", 0.5f);
+        engine.setBlockParam (id, "mix", 1.0f);
+
+        // A short burst, then silence: the repeats must appear in the silence.
+        std::vector<float> burst (kBlock * 200, 0.0f);
+        const auto pluck = makeSine (kBlock * 10, 220.0, 0.4f);
+        std::copy (pluck.begin(), pluck.end(), burst.begin());
+
+        const auto out = runBlocks (engine, burst);
+        check (allFinite (out), "delay output is finite");
+
+        // 100 ms at 48 k is 4800 samples; the burst is only 640 long.
+        const double tail = rms ({ out.begin() + 4000, out.begin() + 8000 });
+        check (tail > 1e-4, "delay repeats after the input has stopped");
+    }
+
+    // --- reverb: leaves a tail, and is not silent --------------------------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto id = engine.addBlock (gootar::BlockType::Reverb, 1);
+        engine.setBlockParam (id, "size", 0.8f);
+        engine.setBlockParam (id, "mix", 0.6f);
+
+        std::vector<float> burst (kBlock * 300, 0.0f);
+        const auto pluck = makeSine (kBlock * 20, 220.0, 0.4f);
+        std::copy (pluck.begin(), pluck.end(), burst.begin());
+
+        const auto out = runBlocks (engine, burst);
+        check (allFinite (out), "reverb output is finite");
+
+        const double tail = rms ({ out.begin() + kBlock * 40, out.begin() + kBlock * 90 });
+        check (tail > 1e-5, "reverb leaves a tail after the note stops");
+        check (rms (out) < 5.0, "reverb does not run away");
+    }
+
+    // --- a full board: several pedals at once ------------------------------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto models = findModels();
+        std::string err;
+        if (! models.empty())
+            engine.loadModel (0, models[0], err);
+
+        // drive in front of the amp, delay and reverb after the cab
+        engine.addBlock (gootar::BlockType::Drive, 1);
+        engine.addBlock (gootar::BlockType::Delay, 5);
+        engine.addBlock (gootar::BlockType::Reverb, 6);
+
+        const auto out = runBlocks (engine, tone);
+        engine.collectGarbage();
+
+        check (engine.currentChain().size() == 10, "board holds amp plus three pedals");
+        check (allFinite (out), "a full board produces finite audio");
+        check (rms (out, kBlock * 20) > 1e-6, "a full board produces audio");
+    }
+
+    // --- removing and reordering ------------------------------------------
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        const auto id = engine.addBlock (gootar::BlockType::Drive, 1);
+        engine.setBlockParam (id, "drive", 7.0f);
+        runBlocks (engine, tone);
+
+        engine.moveBlock (id, 4);
+        runBlocks (engine, tone);
+        const auto params = engine.blockParams (id);
+        const auto driveParam = std::find_if (params.begin(), params.end(),
+            [] (const auto& p) { return p.key == "drive"; });
+        check (driveParam != params.end() && std::abs (driveParam->value - 7.0f) < 0.01f,
+               "a moved pedal keeps its settings");
+
+        engine.removeBlock (id);
+        runBlocks (engine, tone);
+        engine.collectGarbage();
+        check (engine.blockParams (id).empty(), "a removed pedal is gone");
+        check (allFinite (runBlocks (engine, tone)), "chain still works after removal");
+    }
+}
+
 } // namespace
 
 int main()
 {
+    silenceCrashDialogs();
     std::printf ("Gootar engine tests (%.0f Hz, %d-sample blocks)\n", kSampleRate, kBlock);
 
     testChainWithoutModel();
@@ -500,6 +651,7 @@ int main()
     testHotSwapUnderLoad();
     testPitchDetection();
     testChainEditing();
+    testPedals();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL PASSED" : "FAILURES PRESENT");
     return failures == 0 ? 0 : 1;

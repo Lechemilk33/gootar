@@ -85,3 +85,47 @@ test("assetMatches is hash-based and case-insensitive on input", () => {
   assert.equal(assetMatches(modelRef, "A".repeat(64)), true);
   assert.equal(assetMatches(modelRef, "b".repeat(64)), false);
 });
+
+test("a preset carries the pedalboard, not just the amp", () => {
+  const p = createPreset({ name: "Rig", model: modelRef });
+  const withBoard = {
+    ...p,
+    chain: [
+      { type: "gain", id: "input", enabled: true, params: {}, ref: null },
+      {
+        type: "drive",
+        id: "drive-1",
+        enabled: true,
+        params: { drive: 7.5, tone: 6, level: -2 },
+        ref: null,
+      },
+      { type: "model", id: "model-1", enabled: true, params: {}, ref: modelRef },
+      { type: "gain", id: "output", enabled: true, params: {}, ref: null },
+    ],
+  };
+
+  const parsed = PresetSchema.parse(withBoard);
+  assert.equal(parsed.chain.length, 4);
+  assert.equal(parsed.chain[1]!.type, "drive");
+  // Pedal knobs survive verbatim; losing them would make presets useless.
+  assert.equal(parsed.chain[1]!.params["drive"], 7.5);
+
+  const roundTripped = PresetSchema.parse(JSON.parse(JSON.stringify(parsed)));
+  assert.deepEqual(roundTripped, parsed);
+});
+
+test("a preset with no chain is valid and means the stock rig", () => {
+  const p = createPreset({ name: "Plain", model: modelRef });
+  assert.deepEqual(p.chain, []);
+  const { chain: _omitted, ...withoutChain } = p;
+  assert.equal(PresetSchema.safeParse(withoutChain).success, true);
+});
+
+test("an unknown block type is rejected rather than silently dropped", () => {
+  const p = createPreset({ name: "Rig", model: modelRef });
+  const bogus = {
+    ...p,
+    chain: [{ type: "flamethrower", id: "x", enabled: true, params: {}, ref: null }],
+  };
+  assert.equal(PresetSchema.safeParse(bogus).success, false);
+});

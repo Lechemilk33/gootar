@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include "../dsp/ChainSpec.h"
 #include "../dsp/GootarEngine.h"
 
 namespace gootar {
@@ -26,9 +27,27 @@ struct AssetRef
  * packages/preset-schema/schema/gootar-preset-v1.schema.json, generated from
  * the zod source.
  */
+/** One stage of the board, as a preset stores it. */
+struct PresetChainBlock
+{
+    BlockType   type = BlockType::Model;
+    juce::String id;
+    bool         enabled = true;
+    /** Pedal knobs. Free-form, so a new pedal needs no format change. */
+    std::vector<std::pair<juce::String, double>> params;
+    /** Which capture or cab this slot holds; only for model and ir blocks. */
+    AssetRef     ref;
+    bool         hasRef = false;
+};
+
 struct Preset
 {
-    static constexpr int kSchemaVersion = 1;
+    /**
+     * 2 added the board. Version 1 files still load - they describe the stock
+     * chain, so an empty chain is filled in with the standard one.
+     */
+    static constexpr int kSchemaVersion = 2;
+    static constexpr int kMinReadableVersion = 1;
 
     juce::String id;
     juce::String name { "Untitled" };
@@ -44,6 +63,9 @@ struct Preset
     AssetRef model;
     AssetRef ir;
     bool hasIR = false;
+
+    /** The board in signal order. Empty means the stock chain. */
+    std::vector<PresetChainBlock> chain;
 
     /** A preset with everything at the stock plugin's defaults. */
     static Preset makeDefault();

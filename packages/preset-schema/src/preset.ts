@@ -68,6 +68,35 @@ export const OutputSectionSchema = z.object({
 });
 
 /**
+ * One stage of the signal chain, as stored in a preset.
+ *
+ * The chain is what makes a preset a *rig* rather than just an amp plus knob
+ * positions: which pedals, in what order, set how. Without it, saving a preset
+ * would quietly lose the board you just built, which is worse than not having
+ * presets at all.
+ *
+ * Fixed stages (input level, gate, tone stack, cab, DC blocker, output) appear
+ * here for their POSITION only. Their values live in the sections below, where
+ * they can also be host-automated. Storing them twice would let the two copies
+ * disagree.
+ */
+export const ChainBlockSchema = z.object({
+  type: z.enum([
+    "gain", "gate", "model", "toneStack", "ir", "dcBlocker",
+    "drive", "compressor", "delay", "reverb",
+  ]),
+  /** Stable across reorders, so a block keeps its settings when it moves. */
+  id: z.string().min(1).max(64),
+  enabled: z.boolean().default(true),
+  /** Pedal knobs. Free-form so a new pedal needs no schema change. */
+  params: z.record(z.string(), z.number()).default({}),
+  /** Which capture or cab this slot holds, for model and ir blocks. */
+  ref: AssetRefSchema.nullable().default(null),
+  slim: db(P.slim).optional(),
+});
+export type ChainBlock = z.infer<typeof ChainBlockSchema>;
+
+/**
  * A Gootar preset.
  *
  * Section order in this object mirrors the real signal flow, which is taken
@@ -75,7 +104,11 @@ export const OutputSectionSchema = z.object({
  * split: it triggers on the clean input and applies its gain after the model.
  */
 export const PresetSchema = z.object({
-  schemaVersion: z.literal(1),
+  /**
+   * 2 added the chain. Version 1 files still load: they describe the stock
+   * chain, so a reader that finds no `chain` fills in the standard one.
+   */
+  schemaVersion: z.literal(2),
   id: z.uuid(),
   name: z.string().min(1).max(200),
 
@@ -97,6 +130,12 @@ export const PresetSchema = z.object({
   toneStack: ToneStackSectionSchema,
   ir: IrSectionSchema,
   output: OutputSectionSchema,
+
+  /**
+   * The board, in signal order. Empty means "the stock chain", which is what a
+   * version 1 preset and a plain amp-only rig both are.
+   */
+  chain: z.array(ChainBlockSchema).max(32).default([]),
 });
 export type Preset = z.infer<typeof PresetSchema>;
 
@@ -121,7 +160,7 @@ export type LibraryEntry = z.infer<typeof LibraryEntrySchema>;
 
 /** What a share-by-link URL actually carries. */
 export const RigBundleSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   name: z.string().min(1).max(200),
   description: z.string().max(4000).default(""),
   presets: z.array(PresetSchema).min(1).max(128),

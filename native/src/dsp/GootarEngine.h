@@ -123,6 +123,37 @@ public:
     void setChain (const std::vector<ChainSlot>&);
     std::vector<ChainSlot> currentChain() const;
 
+    // --- editing the board -------------------------------------------------
+
+    /**
+     * Insert a pedal at a position in the chain. Returns its new id.
+     *
+     * Position is an index into the chain as currentChain() reports it, so
+     * "in front of the amp" and "after the cab" are both just an index.
+     */
+    std::string addBlock (BlockType, int position);
+    void removeBlock (const std::string& id);
+    /** Move a block to a new index. Its state and any loaded file come with it. */
+    void moveBlock (const std::string& id, int newPosition);
+    void setBlockEnabled (const std::string& id, bool enabled);
+
+    // --- pedal knobs -------------------------------------------------------
+
+    /**
+     * What knobs a pedal has, and their ranges.
+     *
+     * Generic on purpose: the UI renders whatever this returns, so a new pedal
+     * needs no UI work at all.
+     */
+    struct ParamDescriptor
+    {
+        std::string key, label, suffix;
+        float min = 0.0f, max = 1.0f, step = 0.01f, value = 0.0f;
+    };
+
+    std::vector<ParamDescriptor> blockParams (const std::string& id) const;
+    void setBlockParam (const std::string& id, const std::string& key, float value);
+
     /** Free anything the audio thread has finished with. Loader thread only. */
     void collectGarbage() noexcept;
 

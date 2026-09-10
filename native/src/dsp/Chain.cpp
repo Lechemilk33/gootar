@@ -2,11 +2,15 @@
 
 #include <algorithm>
 
+#include "blocks/CompressorBlock.h"
 #include "blocks/DCBlockerBlock.h"
+#include "blocks/DelayBlock.h"
+#include "blocks/DriveBlock.h"
 #include "blocks/GainBlock.h"
 #include "blocks/GateBlock.h"
 #include "blocks/IRBlock.h"
 #include "blocks/ModelBlock.h"
+#include "blocks/ReverbBlock.h"
 #include "blocks/ToneStackBlock.h"
 
 namespace gootar {
@@ -21,6 +25,10 @@ const char* toString (BlockType t) noexcept
         case BlockType::ToneStack: return "toneStack";
         case BlockType::IR:        return "ir";
         case BlockType::DCBlocker: return "dcBlocker";
+        case BlockType::Drive:      return "drive";
+        case BlockType::Compressor: return "compressor";
+        case BlockType::Delay:      return "delay";
+        case BlockType::Reverb:     return "reverb";
     }
     return "unknown";
 }
@@ -33,6 +41,10 @@ bool blockTypeFromString (const std::string& s, BlockType& out) noexcept
     if (s == "toneStack") { out = BlockType::ToneStack; return true; }
     if (s == "ir")        { out = BlockType::IR;        return true; }
     if (s == "dcBlocker") { out = BlockType::DCBlocker; return true; }
+    if (s == "drive")      { out = BlockType::Drive;      return true; }
+    if (s == "compressor") { out = BlockType::Compressor; return true; }
+    if (s == "delay")      { out = BlockType::Delay;      return true; }
+    if (s == "reverb")     { out = BlockType::Reverb;     return true; }
     return false;
 }
 
@@ -67,6 +79,10 @@ Block* BlockRegistry::getOrCreate (BlockType type, const std::string& id,
         case BlockType::Model:     block = std::make_unique<ModelBlock> (id); break;
         case BlockType::IR:        block = std::make_unique<IRBlock> (id); break;
         case BlockType::DCBlocker: block = std::make_unique<DCBlockerBlock> (id); break;
+        case BlockType::Drive:      block = std::make_unique<DriveBlock> (id); break;
+        case BlockType::Compressor: block = std::make_unique<CompressorBlock> (id); break;
+        case BlockType::Delay:      block = std::make_unique<DelayBlock> (id); break;
+        case BlockType::Reverb:     block = std::make_unique<ReverbBlock> (id); break;
         case BlockType::Gate:
             if (! gate)
                 gate = std::make_shared<GateState>();

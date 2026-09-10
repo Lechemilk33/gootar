@@ -338,6 +338,37 @@ Preset GootarProcessor::capturePreset (const juce::String& name) const
         p.ir = makeRef (irFile, root);
         p.hasIR = p.ir.isValid();
     }
+
+    // The board: order, which pedals, and every knob on them. Without this a
+    // preset would remember the amp and quietly lose the rig around it.
+    for (const auto& slot : engine.currentChain())
+    {
+        PresetChainBlock block;
+        block.type = slot.type;
+        block.id = juce::String (slot.id);
+        block.enabled = slot.enabled;
+
+        for (const auto& param : engine.blockParams (slot.id))
+            block.params.emplace_back (juce::String (param.key), param.value);
+
+        if (slot.type == BlockType::Model)
+        {
+            const auto info = engine.modelInfo (0);
+            if (info.loaded)
+            {
+                block.ref = makeRef (juce::File (juce::String (info.filePath)), root);
+                block.hasRef = block.ref.isValid();
+            }
+        }
+        else if (slot.type == BlockType::IR && irFile.existsAsFile())
+        {
+            block.ref = p.ir;
+            block.hasRef = p.hasIR;
+        }
+
+        p.chain.push_back (std::move (block));
+    }
+
     return p;
 }
 
@@ -364,6 +395,22 @@ bool GootarProcessor::applyPreset (const Preset& p, juce::String& errorOut)
     if (auto* modeParam = apvts.getParameter (pid::outputMode))
         modeParam->setValueNotifyingHost (
             modeParam->convertTo0to1 ((float) static_cast<int> (p.params.outputMode)));
+
+    // Rebuild the board before loading anything into it, so the slots a
+    // capture or cab needs to land in actually exist.
+    if (! p.chain.empty())
+    {
+        std::vector<ChainSlot> spec;
+        spec.reserve (p.chain.size());
+        for (const auto& block : p.chain)
+            spec.push_back (ChainSlot { block.type, block.id.toStdString(), block.enabled });
+        engine.setChain (spec);
+
+        for (const auto& block : p.chain)
+            for (const auto& [key, value] : block.params)
+                engine.setBlockParam (block.id.toStdString(), key.toStdString(),
+                                      static_cast<float> (value));
+    }
 
     // Resolve the model by hash first; fall back to filename so a preset from
     // another machine still finds a plausible match rather than silently

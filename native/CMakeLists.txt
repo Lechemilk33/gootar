@@ -28,6 +28,7 @@ target_link_libraries(gootar_model_swapper_test PRIVATE Threads::Threads)
 
 enable_testing()
 add_test(NAME model_swapper COMMAND gootar_model_swapper_test)
+set_tests_properties(model_swapper PROPERTIES TIMEOUT 300)
 
 # ---------------------------------------------------------------------------
 # The DSP engine: the whole signal chain, with no JUCE in it.
@@ -77,6 +78,8 @@ if(EXISTS "${GOOTAR_NA}/CMakeLists.txt" AND EXISTS "${GOOTAR_ADT}/dsp/dsp.cpp")
     GOOTAR_TEST_MODEL_DIR="${GOOTAR_NA}/Utils/Models")
 
   add_test(NAME engine COMMAND gootar_engine_test)
+  # These run in well under a second; anything near this ceiling is a hang.
+  set_tests_properties(engine PROPERTIES TIMEOUT 300)
 
 else()
   message(STATUS "gootar: submodules missing - run 'git submodule update --init --recursive'")

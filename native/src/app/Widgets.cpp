@@ -144,49 +144,88 @@ void TunerDisplay::paint (juce::Graphics& g)
 void ChainStrip::setEntries (juce::Array<Entry> newEntries)
 {
     entries = std::move (newEntries);
+    computeMetrics();
     repaint();
 }
 
-void ChainStrip::paint (juce::Graphics& g)
+void ChainStrip::setSelected (const juce::String& id)
 {
-    auto bounds = getLocalBounds().reduced (theme::pad, 6);
+    if (selectedId != id) { selectedId = id; repaint(); }
+}
 
-    g.setColour (theme::textDim);
-    g.setFont (theme::font (10.0f, true));
-    g.drawText ("SIGNAL CHAIN", bounds.removeFromTop (13),
-                juce::Justification::centredLeft, false);
-
-    if (entries.isEmpty())
-        return;
-
-    // Fixed pill height: the panel may be taller than the strip needs, and a
-    // block stretched to fill it reads as a fader, not a stage.
-    auto row = bounds.removeFromTop (26);
+/**
+ * Pill geometry, worked out once and used by both painting and hit-testing.
+ *
+ * Two copies of this arithmetic would drift the moment one is edited, and the
+ * symptom would be clicks landing on the wrong pedal - the kind of bug that is
+ * maddening to track down because everything looks right.
+ */
+void ChainStrip::computeMetrics()
+{
     const int n = entries.size();
+    if (n == 0) { pillWidth = 0; return; }
 
-    // Fit to the width available rather than assuming it. With seven blocks in
-    // a narrow column, fixed pill sizes overflow and the last block - usually
-    // the output - silently disappears off the edge.
-    int gap = 5, arrow = 8, pill = 0;
+    auto row = getLocalBounds().reduced (theme::pad, 6);
+    row.removeFromTop (13);
+    const int available = row.getWidth();
+
     for (const auto& attempt : { std::pair { 5, 8 }, std::pair { 3, 6 }, std::pair { 2, 4 } })
     {
         gap = attempt.first;
         arrow = attempt.second;
-        const int spacing = (n - 1) * (arrow + gap * 2);
-        pill = (row.getWidth() - spacing) / juce::jmax (1, n);
-        if (pill >= 30)
+        pillWidth = (available - (n - 1) * (arrow + gap * 2)) / juce::jmax (1, n);
+        if (pillWidth >= 30)
             break;
     }
-    pill = juce::jmax (20, pill);
+    pillWidth = juce::jmax (20, pillWidth);
 
-    const int used = n * pill + (n - 1) * (arrow + gap * 2);
-    int x = row.getX() + juce::jmax (0, (row.getWidth() - used) / 2);
+    const int used = n * pillWidth + (n - 1) * (arrow + gap * 2);
+    originX = row.getX() + juce::jmax (0, (available - used) / 2);
+}
 
-    for (int i = 0; i < n; ++i)
+juce::Rectangle<int> ChainStrip::boxFor (int index) const
+{
+    auto row = getLocalBounds().reduced (theme::pad, 6);
+    row.removeFromTop (13);
+    const int x = originX + index * (pillWidth + arrow + gap * 2);
+    return { x, row.getY(), pillWidth, juce::jmin (26, row.getHeight()) };
+}
+
+int ChainStrip::indexAt (juce::Point<int> point) const
+{
+    for (int i = 0; i < entries.size(); ++i)
+        if (boxFor (i).expanded (gap, 4).contains (point))
+            return i;
+    return -1;
+}
+
+void ChainStrip::mouseDown (const juce::MouseEvent& event)
+{
+    const int index = indexAt (event.getPosition());
+    if (index < 0)
+        return;
+    setSelected (entries.getReference (index).id);
+    if (onSelect)
+        onSelect (selectedId);
+}
+
+void ChainStrip::paint (juce::Graphics& g)
+{
+    auto header = getLocalBounds().reduced (theme::pad, 6).removeFromTop (13);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (10.0f, true));
+    g.drawText ("SIGNAL CHAIN", header, juce::Justification::centredLeft, false);
+
+    if (entries.isEmpty())
+        return;
+
+    computeMetrics();
+
+    for (int i = 0; i < entries.size(); ++i)
     {
         const auto& e = entries.getReference (i);
-        const juce::Rectangle<float> box ((float) x, (float) row.getY(),
-                                          (float) pill, (float) row.getHeight());
+        const auto box = boxFor (i).toFloat();
+        const bool isSelected = e.id == selectedId;
 
         const auto colour = ! e.enabled ? theme::line
                           : e.loaded    ? theme::accent
@@ -194,20 +233,107 @@ void ChainStrip::paint (juce::Graphics& g)
 
         g.setColour (e.enabled && e.loaded ? theme::accentDim : theme::surfaceHigh);
         g.fillRoundedRectangle (box, (float) theme::radius - 3.0f);
-        g.setColour (colour);
-        g.drawRoundedRectangle (box, (float) theme::radius - 3.0f, 1.0f);
+        g.setColour (isSelected ? theme::text : colour);
+        g.drawRoundedRectangle (box, (float) theme::radius - 3.0f, isSelected ? 2.0f : 1.0f);
 
         g.setColour (e.enabled ? colour : theme::textDim.withAlpha (0.5f));
-        g.setFont (theme::font (pill >= 34 ? 10.0f : 8.5f, true));
+        g.setFont (theme::font (pillWidth >= 34 ? 10.0f : 8.5f, true));
         g.drawText (e.label, box.toNearestInt(), juce::Justification::centred, false);
 
-        x += pill;
-        if (i + 1 < n)
+        if (i + 1 < entries.size())
         {
             g.setColour (theme::line.brighter (0.2f));
             const float cy = box.getCentreY();
-            g.drawLine ((float) (x + gap), cy, (float) (x + gap + arrow), cy, 1.0f);
-            x += arrow + gap * 2;
+            const float ax = box.getRight() + (float) gap;
+            g.drawLine (ax, cy, ax + (float) arrow, cy, 1.0f);
+        }
+    }
+}
+
+// --- PedalEditor -----------------------------------------------------------
+
+void PedalEditor::setPedal (const juce::String& newTitle, const juce::Array<Param>& params)
+{
+    title = newTitle;
+    controls.clear();
+
+    for (const auto& p : params)
+    {
+        Control control;
+        control.key = p.key;
+
+        control.slider = std::make_unique<juce::Slider> (
+            juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow);
+        control.slider->setRange (p.min, p.max, p.step);
+        control.slider->setValue (p.value, juce::dontSendNotification);
+        control.slider->setTextValueSuffix (p.suffix);
+        control.slider->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 14);
+        control.slider->setColour (juce::Slider::textBoxTextColourId, theme::text);
+
+        const auto key = p.key;
+        auto* raw = control.slider.get();
+        control.slider->onValueChange = [this, key, raw]
+        {
+            if (onChange)
+                onChange (key, (float) raw->getValue());
+        };
+        addAndMakeVisible (*control.slider);
+
+        control.label = std::make_unique<juce::Label>();
+        control.label->setText (p.label, juce::dontSendNotification);
+        control.label->setJustificationType (juce::Justification::centred);
+        control.label->setFont (theme::font (9.5f, true));
+        control.label->setColour (juce::Label::textColourId, theme::textDim);
+        addAndMakeVisible (*control.label);
+
+        controls.push_back (std::move (control));
+    }
+
+    resized();
+    repaint();
+}
+
+void PedalEditor::paint (juce::Graphics& g)
+{
+    auto header = getLocalBounds().reduced (theme::pad, 8).removeFromTop (13);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (10.0f, true));
+    g.drawText (title.isEmpty() ? "PEDAL" : title.toUpperCase(), header,
+                juce::Justification::centredLeft, false);
+
+    if (controls.empty())
+    {
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (12.0f));
+        g.drawText ("select something in the chain",
+                    getLocalBounds().reduced (theme::pad, 8).withTrimmedTop (16),
+                    juce::Justification::centredTop, false);
+    }
+}
+
+void PedalEditor::resized()
+{
+    if (controls.empty())
+        return;
+
+    auto area = getLocalBounds().reduced (theme::pad, 8);
+    area.removeFromTop (18);
+
+    // Wrap into rows of three so five knobs do not become five slivers.
+    const int perRow = juce::jlimit (1, 3, (int) controls.size());
+    const int cell = juce::jmax (56, area.getWidth() / perRow);
+    const int rowHeight = juce::jmin (76, juce::jmax (54, area.getHeight() /
+                            (int) std::ceil (controls.size() / (double) perRow)));
+
+    int index = 0;
+    while (index < (int) controls.size() && area.getHeight() >= 40)
+    {
+        auto row = area.removeFromTop (rowHeight);
+        for (int i = 0; i < perRow && index < (int) controls.size(); ++i, ++index)
+        {
+            auto column = row.removeFromLeft (cell);
+            controls[(size_t) index].label->setBounds (column.removeFromTop (12));
+            controls[(size_t) index].slider->setBounds (column.reduced (2, 0));
         }
     }
 }

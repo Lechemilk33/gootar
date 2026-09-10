@@ -27,7 +27,7 @@ Both halves work.
 | Preset schema | zod source of truth, 9 tests, emits JSON Schema for the C++ side |
 | Librarian (local UI) | imports + hashes + tags captures, gapless A/B against a DI loop, preset save/load. NAM-in-the-page **verified end to end** against a real capture |
 | Player | full chain (gate / model / tone stack / IR / DC blocker / levels), model browser, hot-swap, preset I/O. Standalone **and** VST3 build |
-| Signal chain | an ordered list of blocks, not a fixed sequence: reorder it, or run two captures in series, without a rewrite |
+| Pedalboard | drive, compressor, delay, reverb — add, remove and reorder them; a second amp capture is just another block. Saved with the preset |
 | Tuner | MPM pitch detection off the clean input, ±cents readout |
 | Hot-swap | 20k swaps against a live audio thread, clean under TSan and ASan/UBSan |
 
@@ -114,16 +114,15 @@ docs/                     usage, audit, architecture, signal chain
 4. ~~Gate + EQ + levels in the right order~~ done
 5. ~~Preset save/load~~ done
 6. ~~Model browser + hot-swap while playing~~ done — the product
-7. ~~Chain multiple models (pedal → amp)~~ done in the engine — two captures in
-   series is a chain edit, and a test covers it. What is left is a UI for
-   reordering the board, and persisting a custom order in the preset file
+7. ~~Chain multiple models (pedal → amp)~~ done — two captures in series is a
+   chain edit, and the board is editable from the UI and saved in the preset
 
 VST3 was never a milestone in the end: JUCE builds Standalone and VST3 as two
 formats of one target, on from the start.
 
 Not done: ASIO is off in CI because the SDK is a separate download
-([USAGE](docs/USAGE.md) says how to turn it on), and the librarian is
-local-first with no share-by-link backend.
+([USAGE](docs/USAGE.md) says how to turn it on), and there is no drag-and-drop
+for reordering — the arrows do it.
 
 ## Built on
 

@@ -11,8 +11,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push makes the previous run's answer irrelevant. Without this, stale
+# runs sit holding runners and everything queues behind them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

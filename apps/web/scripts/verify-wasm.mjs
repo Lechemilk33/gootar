@@ -74,6 +74,23 @@ const waitForServer = async () => {
   throw new Error("server did not start");
 };
 
+/**
+ * Hard ceiling on the whole check.
+ *
+ * Without this, a browser that fails to start leaves the script waiting on a
+ * promise that never settles - which in CI means an hour of a runner sitting
+ * on a hang instead of a two-minute failure telling you what broke.
+ */
+const OVERALL_TIMEOUT_MS = 4 * 60 * 1000;
+
+const withTimeout = (promise, ms, what) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`timed out after ${ms / 1000}s: ${what}`)), ms),
+    ),
+  ]);
+
 const main = async () => {
   await waitForServer();
 
@@ -87,6 +104,7 @@ const main = async () => {
   page.on("pageerror", (e) => logs.push(`pageerror: ${e.message}`));
 
   await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "load", timeout: 30000 });
+  page.setDefaultTimeout(60000);
 
   // Drive the published worklet and wasm directly, over the same protocol and
   // the same static asset URLs the app uses at runtime.
@@ -188,4 +206,10 @@ const main = async () => {
   }
 };
 
-main().catch((e) => { console.error(e); process.exitCode = 1; });
+withTimeout(main(), OVERALL_TIMEOUT_MS, "wasm verification").catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+  // The server child keeps the process alive; the exit handler kills it, but
+  // force the exit so a wedged browser cannot hold this open either.
+  process.exit(1);
+});

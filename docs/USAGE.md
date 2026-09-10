@@ -98,6 +98,28 @@ ranges, same defaults — so a tone you dial here transfers.
 
 ---
 
+## 3b. Pedals
+
+The chain isn't fixed. **+ Pedal** adds one; click any block in the chain to
+select it and its knobs appear underneath.
+
+| | |
+|---|---|
+| **Drive / boost** | The important one. A capture models one amp at one setting — you can't turn its gain up. What you *can* do is hit it harder, exactly like a real pedal in front of a real amp, and because the capture responds to input level the way the original did, it works. |
+| **Compressor** | Evens out picking. In front of the amp it makes quiet notes still push it into breakup; after, it tames the output. |
+| **Delay** | Time, feedback, mix. |
+| **Reverb** | Size, damping, mix. |
+
+New pedals land where that kind of pedal belongs — drive and compressor in
+front of the amp, delay and reverb after the cab. Use **<** and **>** to move
+the selected one, **Remove** to delete it.
+
+You can also add a **second amp capture**, which gives you the pedal-platform
+into amp trick: one capture as a dirt pedal feeding another as the amp.
+
+Moving a pedal never resets it — its knobs, and any capture loaded in a slot,
+come with it.
+
 ## 4. Presets
 
 **Save preset** writes a `.json`. **Load preset** reads one back.

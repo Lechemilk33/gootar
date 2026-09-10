@@ -11,9 +11,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./schema/gootar-preset-v1.schema.json": "./schema/gootar-preset-v1.schema.json"
+    "./schema/gootar-preset.schema.json": "./schema/gootar-preset.schema.json"
   },
-  "files": ["dist", "schema"],
+  "files": [
+    "dist",
+    "schema"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run emit:jsonschema",
     "emit:jsonschema": "node --experimental-strip-types scripts/emit-json-schema.ts",

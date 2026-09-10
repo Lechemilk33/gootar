@@ -69,6 +69,26 @@ public:
     std::vector<ChainSlot> chainSpec() const { return engine.currentChain(); }
     int numModelSlots() const { return engine.numModelSlots(); }
 
+    // --- the pedalboard ----------------------------------------------------
+    juce::String addBlock (BlockType type, int position)
+    {
+        return juce::String (engine.addBlock (type, position));
+    }
+    void removeBlock (const juce::String& id) { engine.removeBlock (id.toStdString()); }
+    void moveBlock (const juce::String& id, int pos) { engine.moveBlock (id.toStdString(), pos); }
+    void setBlockEnabled (const juce::String& id, bool on)
+    {
+        engine.setBlockEnabled (id.toStdString(), on);
+    }
+    std::vector<GootarEngine::ParamDescriptor> blockParams (const juce::String& id) const
+    {
+        return engine.blockParams (id.toStdString());
+    }
+    void setBlockParam (const juce::String& id, const juce::String& key, float value)
+    {
+        engine.setBlockParam (id.toStdString(), key.toStdString(), value);
+    }
+
     float inputPeak() const noexcept { return engine.inputPeak(); }
     float outputPeak() const noexcept { return engine.outputPeak(); }
 

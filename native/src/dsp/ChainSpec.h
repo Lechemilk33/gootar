@@ -19,12 +19,27 @@ namespace gootar {
  */
 enum class BlockType
 {
-    Gain,       // input or output level
-    Gate,       // split noise gate: detects pre-model, applies post-model
-    Model,      // a NAM capture
-    ToneStack,  // bass / mid / treble
-    IR,         // impulse response
-    DCBlocker,  // 5 Hz high-pass
+    // The fixed parts of an amp rig.
+    Gain,        // input or output level
+    Gate,        // split noise gate: detects pre-model, applies post-model
+    Model,       // a NAM capture
+    ToneStack,   // bass / mid / treble
+    IR,          // impulse response
+    DCBlocker,   // 5 Hz high-pass
+
+    // Pedals. Put them anywhere: a drive in front of the capture pushes it
+    // the way a real pedal pushes a real amp, a delay after the cab sounds
+    // like a delay in an effects loop.
+    Drive,
+    Compressor,
+    Delay,
+    Reverb,
+};
+
+/** Everything a user can add to their board, in menu order. */
+inline constexpr BlockType kAddableBlocks[] = {
+    BlockType::Model, BlockType::Drive, BlockType::Compressor,
+    BlockType::Delay, BlockType::Reverb, BlockType::ToneStack, BlockType::IR,
 };
 
 const char* toString (BlockType) noexcept;

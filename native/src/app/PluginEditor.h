@@ -53,6 +53,10 @@ private:
     void refreshStatus();
     void refreshChainStrip();
     void refreshInfoPanel();
+    void refreshPedalEditor();
+    void showAddPedalMenu();
+    int  indexOfSelected() const;
+    int  defaultInsertPosition (BlockType) const;
 
     struct Knob
     {
@@ -83,7 +87,14 @@ private:
 
     TunerDisplay tuner;
     ChainStrip   chainStrip;
+    PedalEditor  pedalEditor;
     InfoPanel    infoPanel;
+
+    juce::TextButton addPedalButton    { "+ Pedal" };
+    juce::TextButton removePedalButton { "Remove" };
+    juce::TextButton moveLeftButton    { "<" };
+    juce::TextButton moveRightButton   { ">" };
+    juce::String     selectedBlockId;
     LevelMeter   inputMeter { "IN" };
     LevelMeter   outputMeter { "OUT" };
 
@@ -105,7 +116,7 @@ private:
      */
     struct Layout
     {
-        juce::Rectangle<int> list, tuner, meters, chain, info, knobs;
+        juce::Rectangle<int> list, tuner, meters, chain, pedal, info, knobs;
     } layout;
 
     juce::Array<LibraryItem> filtered;

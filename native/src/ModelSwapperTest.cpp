@@ -6,6 +6,7 @@
  * -fsanitize=thread,address to check the claims rather than trust them.
  */
 #include "ModelSwapper.h"
+#include "TestPlatform.h"
 
 #include <atomic>
 #include <chrono>
@@ -38,6 +39,7 @@ struct FakeModel
 
 int main()
 {
+    silenceCrashDialogs();
     using namespace std::chrono;
 
     constexpr int kLoads = 20000;

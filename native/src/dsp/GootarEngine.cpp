@@ -9,6 +9,7 @@
 #include "../ModelSwapper.h"
 #include "Chain.h"
 #include "PitchDetector.h"
+#include "blocks/EffectBlock.h"
 #include "blocks/GainBlock.h"
 #include "blocks/IRBlock.h"
 #include "blocks/ModelBlock.h"
@@ -282,6 +283,89 @@ std::vector<ChainSlot> GootarEngine::currentChain() const
 {
     std::lock_guard<std::mutex> lock (impl->specMutex);
     return impl->spec;
+}
+
+namespace {
+
+/** A readable, unique id for a newly added block: "drive-1", "drive-2"... */
+std::string makeBlockId (const std::vector<ChainSlot>& spec, BlockType type)
+{
+    const std::string base = toString (type);
+    for (int n = 1; n < 1000; ++n)
+    {
+        const auto candidate = base + "-" + std::to_string (n);
+        const bool taken = std::any_of (spec.begin(), spec.end(),
+            [&] (const ChainSlot& s) { return s.id == candidate; });
+        if (! taken)
+            return candidate;
+    }
+    return base;
+}
+
+} // namespace
+
+std::string GootarEngine::addBlock (BlockType type, int position)
+{
+    auto spec = currentChain();
+    const auto id = makeBlockId (spec, type);
+    const int clamped = std::clamp (position, 0, static_cast<int> (spec.size()));
+    spec.insert (spec.begin() + clamped, ChainSlot { type, id, true });
+    setChain (spec);
+    return id;
+}
+
+void GootarEngine::removeBlock (const std::string& id)
+{
+    auto spec = currentChain();
+    spec.erase (std::remove_if (spec.begin(), spec.end(),
+                                [&] (const ChainSlot& s) { return s.id == id; }),
+                spec.end());
+    setChain (spec);
+}
+
+void GootarEngine::moveBlock (const std::string& id, int newPosition)
+{
+    auto spec = currentChain();
+    const auto it = std::find_if (spec.begin(), spec.end(),
+                                  [&] (const ChainSlot& s) { return s.id == id; });
+    if (it == spec.end())
+        return;
+
+    const ChainSlot slot = *it;
+    spec.erase (it);
+    const int clamped = std::clamp (newPosition, 0, static_cast<int> (spec.size()));
+    spec.insert (spec.begin() + clamped, slot);
+    setChain (spec);
+}
+
+void GootarEngine::setBlockEnabled (const std::string& id, bool enabled)
+{
+    auto spec = currentChain();
+    for (auto& slot : spec)
+        if (slot.id == id)
+            slot.enabled = enabled;
+    setChain (spec);
+}
+
+std::vector<GootarEngine::ParamDescriptor>
+GootarEngine::blockParams (const std::string& id) const
+{
+    std::vector<ParamDescriptor> out;
+    auto* effect = dynamic_cast<EffectBlock*> (impl->registry.find (id));
+    if (effect == nullptr)
+        return out;
+
+    for (const auto& info : effect->params())
+        out.push_back (ParamDescriptor {
+            info.key, info.label, info.suffix,
+            info.min, info.max, info.step, effect->getParam (info.key) });
+    return out;
+}
+
+void GootarEngine::setBlockParam (const std::string& id, const std::string& key, float value)
+{
+    if (auto* effect = dynamic_cast<EffectBlock*> (impl->registry.find (id)))
+        effect->setParam (key, value);
 }
 
 void GootarEngine::collectGarbage() noexcept

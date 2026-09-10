@@ -19,8 +19,17 @@
 [CmdletBinding()]
 param(
     [switch]$SkipInstall,
-    [switch]$Clean
+    [switch]$Clean,
+    # Never prompt, never launch. Set automatically when nothing can answer.
+    [switch]$NonInteractive
 )
+
+# A prompt with nobody there to answer it hangs forever, which is exactly what
+# happened the first time this ran in CI. Detect that rather than trusting the
+# caller to pass the switch.
+if ($env:CI -or -not [Environment]::UserInteractive) {
+    $NonInteractive = $true
+}
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -279,7 +288,7 @@ if (-not $enableAsio) {
 }
 Write-Host ''
 
-if (Test-Path $exe) {
+if ((Test-Path $exe) -and -not $NonInteractive) {
     $answer = Read-Host '  Launch the player now? [y/N]'
     if ($answer -match '^[Yy]') { Start-Process $exe }
 }

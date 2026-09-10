@@ -44,8 +44,46 @@ GootarEditor::GootarEditor (GootarProcessor& p)
     statusLine.setColour (juce::Label::textColourId, theme::textDim);
 
     addAndMakeVisible (tuner);
-    addAndMakeVisible (chainStrip);
     addAndMakeVisible (infoPanel);
+
+    addAndMakeVisible (chainStrip);
+    chainStrip.onSelect = [this] (juce::String id)
+    {
+        selectedBlockId = id;
+        refreshPedalEditor();
+    };
+
+    addAndMakeVisible (pedalEditor);
+    pedalEditor.onChange = [this] (juce::String key, float value)
+    {
+        processor.setBlockParam (selectedBlockId, key, value);
+    };
+
+    styleButton (addPedalButton, true);
+    addPedalButton.onClick = [this] { showAddPedalMenu(); };
+    styleButton (removePedalButton);
+    removePedalButton.onClick = [this]
+    {
+        if (selectedBlockId.isNotEmpty())
+        {
+            processor.removeBlock (selectedBlockId);
+            selectedBlockId = {};
+            refreshChainStrip();
+            refreshPedalEditor();
+        }
+    };
+    styleButton (moveLeftButton);
+    moveLeftButton.onClick = [this]
+    {
+        const int at = indexOfSelected();
+        if (at > 0) { processor.moveBlock (selectedBlockId, at - 1); refreshChainStrip(); }
+    };
+    styleButton (moveRightButton);
+    moveRightButton.onClick = [this]
+    {
+        const int at = indexOfSelected();
+        if (at >= 0) { processor.moveBlock (selectedBlockId, at + 1); refreshChainStrip(); }
+    };
     addAndMakeVisible (inputMeter);
     addAndMakeVisible (outputMeter);
 
@@ -70,6 +108,7 @@ GootarEditor::GootarEditor (GootarProcessor& p)
     refreshStatus();
     refreshChainStrip();
     refreshInfoPanel();
+    refreshPedalEditor();
 
     setResizable (true, true);
     setResizeLimits (860, 600, 1800, 1400);
@@ -141,6 +180,7 @@ void GootarEditor::paint (juce::Graphics& g)
     panel (layout.tuner);
     panel (layout.meters);
     panel (layout.chain);
+    panel (layout.pedal);
     panel (layout.info);
     panel (layout.knobs);
 }
@@ -171,7 +211,9 @@ void GootarEditor::resized()
     side.removeFromTop (theme::pad);
     layout.meters = side.removeFromTop (74);
     side.removeFromTop (theme::pad);
-    layout.chain = side.removeFromTop (56);
+    layout.chain = side.removeFromTop (86);
+    side.removeFromTop (theme::pad);
+    layout.pedal = side.removeFromTop (juce::jmax (110, side.getHeight() - 118));
     side.removeFromTop (theme::pad);
     layout.info = side;
 
@@ -191,7 +233,17 @@ void GootarEditor::resized()
     meterArea.removeFromTop (6);
     outputMeter.setBounds (meterArea);
 
-    chainStrip.setBounds (layout.chain);
+    // The chain panel holds the strip plus its edit buttons.
+    auto chainArea = layout.chain;
+    auto chainButtons = chainArea.removeFromBottom (28).reduced (theme::pad, 2);
+    chainStrip.setBounds (chainArea);
+
+    addPedalButton.setBounds (chainButtons.removeFromLeft (74).reduced (2, 0));
+    removePedalButton.setBounds (chainButtons.removeFromLeft (70).reduced (2, 0));
+    moveRightButton.setBounds (chainButtons.removeFromRight (30).reduced (2, 0));
+    moveLeftButton.setBounds (chainButtons.removeFromRight (30).reduced (2, 0));
+
+    pedalEditor.setBounds (layout.pedal);
     infoPanel.setBounds (layout.info);
 
     auto knobs = layout.knobs.reduced (theme::pad, 8);
@@ -356,40 +408,179 @@ void GootarEditor::refreshInfoPanel()
     infoPanel.setRows (std::move (rows));
 }
 
+int GootarEditor::indexOfSelected() const
+{
+    const auto spec = processor.chainSpec();
+    for (int i = 0; i < (int) spec.size(); ++i)
+        if (juce::String (spec[(size_t) i].id) == selectedBlockId)
+            return i;
+    return -1;
+}
+
+void GootarEditor::showAddPedalMenu()
+{
+    juce::PopupMenu menu;
+    int id = 1;
+    std::vector<BlockType> order;
+    for (auto type : kAddableBlocks)
+    {
+        juce::String label;
+        switch (type)
+        {
+            case BlockType::Model:      label = "Amp capture"; break;
+            case BlockType::Drive:      label = "Drive / boost"; break;
+            case BlockType::Compressor: label = "Compressor"; break;
+            case BlockType::Delay:      label = "Delay"; break;
+            case BlockType::Reverb:     label = "Reverb"; break;
+            case BlockType::ToneStack:  label = "Tone stack"; break;
+            case BlockType::IR:         label = "Cabinet IR"; break;
+            default: continue;
+        }
+        menu.addItem (id++, label);
+        order.push_back (type);
+    }
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (addPedalButton),
+        [this, order] (int choice)
+        {
+            if (choice <= 0 || choice > (int) order.size())
+                return;
+            const auto type = order[(size_t) (choice - 1)];
+            selectedBlockId = processor.addBlock (type, defaultInsertPosition (type));
+            refreshChainStrip();
+            refreshPedalEditor();
+        });
+}
+
+/**
+ * Where a newly added pedal should go if you have not said otherwise.
+ *
+ * Signal order is the whole point of a pedalboard, and the sensible answer
+ * depends on the pedal: a drive belongs in FRONT of the amp, because that is
+ * how you push a capture harder - it models one amp at one setting, so hitting
+ * its input is the only gain control you have. A delay belongs after the cab,
+ * where an effects loop would be. Dropping everything at the end would be
+ * technically fine and musically wrong.
+ *
+ * Placement is by TYPE, not by what happens to be selected. Adding a pedal
+ * selects it so its knobs appear, so honouring the selection meant a second
+ * pedal landed after the first rather than in its own natural place - add a
+ * drive then a delay and the delay ends up in front of the amp. Predictable
+ * beats clever: every pedal goes where that kind of pedal belongs, and the
+ * arrows move it if you disagree.
+ */
+int GootarEditor::defaultInsertPosition (BlockType type) const
+{
+    const auto spec = processor.chainSpec();
+    const int size = (int) spec.size();
+
+    const auto firstOf = [&spec, size] (BlockType t)
+    {
+        for (int i = 0; i < size; ++i)
+            if (spec[(size_t) i].type == t) return i;
+        return -1;
+    };
+    const auto lastOf = [&spec, size] (BlockType t)
+    {
+        for (int i = size - 1; i >= 0; --i)
+            if (spec[(size_t) i].type == t) return i;
+        return -1;
+    };
+
+    switch (type)
+    {
+        case BlockType::Drive:
+        case BlockType::Compressor:
+        {
+            // In front of the amp - or of the gate, if there is no amp yet.
+            const int amp = firstOf (BlockType::Model);
+            if (amp >= 0) return amp;
+            const int gate = firstOf (BlockType::Gate);
+            return gate >= 0 ? gate + 1 : 1;
+        }
+        case BlockType::Delay:
+        case BlockType::Reverb:
+        {
+            // After the cab, where an effects loop lives.
+            const int cab = lastOf (BlockType::IR);
+            if (cab >= 0) return cab + 1;
+            const int amp = lastOf (BlockType::Model);
+            return amp >= 0 ? amp + 1 : juce::jmax (0, size - 1);
+        }
+        case BlockType::Model:
+        {
+            // A second capture goes after the first: pedal platform into amp.
+            const int amp = lastOf (BlockType::Model);
+            return amp >= 0 ? amp + 1 : juce::jmax (0, size - 1);
+        }
+        default:
+            break;
+    }
+
+    // Everything else lands just before the output stage.
+    return juce::jmax (0, size - 1);
+}
+
+void GootarEditor::refreshPedalEditor()
+{
+    chainStrip.setSelected (selectedBlockId);
+
+    if (selectedBlockId.isEmpty())
+    {
+        pedalEditor.setPedal ({}, {});
+        return;
+    }
+
+    juce::Array<PedalEditor::Param> params;
+    for (const auto& p : processor.blockParams (selectedBlockId))
+        params.add (PedalEditor::Param {
+            p.key, p.label, p.suffix, p.min, p.max, p.step, p.value });
+
+    // Fixed parts of the amp have no knobs here - theirs are the big ones
+    // along the bottom - so say so rather than showing an empty box.
+    pedalEditor.setPedal (params.isEmpty() ? selectedBlockId : selectedBlockId, params);
+}
+
 void GootarEditor::refreshChainStrip()
 {
     juce::Array<ChainStrip::Entry> entries;
     const auto spec = processor.chainSpec();
-    int modelIndex = 0;
 
     for (const auto& slot : spec)
     {
         ChainStrip::Entry entry;
+        entry.id = juce::String (slot.id);
         entry.enabled = slot.enabled;
         entry.loaded = true;
+        entry.fixed = false;
 
         switch (slot.type)
         {
             case BlockType::Gain:
                 entry.label = slot.id == "input" ? "IN" : "OUT";
+                entry.fixed = true;
                 break;
-            case BlockType::Gate:      entry.label = "GATE"; break;
+            case BlockType::Gate:      entry.label = "GATE"; entry.fixed = true; break;
             case BlockType::ToneStack: entry.label = "TONE"; break;
-            case BlockType::DCBlocker: entry.label = "DC"; break;
+            case BlockType::DCBlocker: entry.label = "DC";   entry.fixed = true; break;
             case BlockType::IR:
-                entry.label = "IR";
+                entry.label = "CAB";
                 entry.loaded = processor.currentIRFile().existsAsFile();
                 break;
             case BlockType::Model:
                 entry.label = "AMP";
                 entry.loaded = processor.modelInfo().loaded;
-                ++modelIndex;
                 break;
+            case BlockType::Drive:      entry.label = "DRIVE"; break;
+            case BlockType::Compressor: entry.label = "COMP";  break;
+            case BlockType::Delay:      entry.label = "DELAY"; break;
+            case BlockType::Reverb:     entry.label = "VERB";  break;
         }
         entries.add (entry);
     }
 
     chainStrip.setEntries (std::move (entries));
+    chainStrip.setSelected (selectedBlockId);
 }
 
 void GootarEditor::refreshStatus()

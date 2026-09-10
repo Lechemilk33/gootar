@@ -15,8 +15,8 @@ mkdirSync(outDir, { recursive: true });
 
 const bundle = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "https://gootar.local/schema/gootar-preset-v1.schema.json",
-  title: "Gootar preset format v1",
+  $id: "https://gootar.local/schema/gootar-preset.schema.json",
+  title: "Gootar preset format",
   description:
     "Preset, library entry and rig bundle formats shared by the Gootar web librarian and native player.",
   $defs: {
@@ -27,6 +27,6 @@ const bundle = {
   oneOf: [{ $ref: "#/$defs/Preset" }],
 };
 
-const out = join(outDir, "gootar-preset-v1.schema.json");
+const out = join(outDir, "gootar-preset.schema.json");
 writeFileSync(out, JSON.stringify(bundle, null, 2) + "\n");
 console.log(`wrote ${out}`);

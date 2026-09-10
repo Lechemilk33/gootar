@@ -16,7 +16,7 @@ export function createPreset(opts: {
 }): Preset {
   const now = (opts.now ?? new Date()).toISOString();
   return PresetSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: opts.id ?? crypto.randomUUID(),
     name: opts.name,
     tags: [],
@@ -47,5 +47,7 @@ export function createPreset(opts: {
     },
     ir: { enabled: true, ref: opts.ir ?? null },
     output: { levelDb: P.outputLevelDb.default, mode: DEFAULT_OUTPUT_MODE },
+    // Empty means the stock chain; the player fills it in.
+    chain: [],
   });
 }

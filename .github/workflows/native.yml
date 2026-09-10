@@ -12,12 +12,19 @@ on:
       - "setup.ps1"
   workflow_dispatch:
 
+# A new push makes the previous run's answer irrelevant. Without this, stale
+# runs sit holding runners and everything queues behind them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # The DSP has no JUCE in it, so it can be checked properly on Linux under
   # sanitisers MSVC does not offer. This is where hot-swap correctness is
   # actually proven: 20k model swaps against a live audio thread, plus the
   # whole chain run against the real .nam files NeuralAudio ships.
   engine:
+    timeout-minutes: 45
     name: engine + sanitizers
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +40,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGOOTAR_BUILD_APP=OFF
           cmake --build build --parallel
-          ctest --test-dir build --output-on-failure
+          ctest --test-dir build --output-on-failure --timeout 300
 
       - name: ThreadSanitizer
         working-directory: native
@@ -65,6 +72,7 @@ jobs:
   # setup.ps1 is the first thing a fresh machine runs. A syntax error there is
   # a completely broken install, so it gets parsed on every change.
   setup-script:
+    timeout-minutes: 25
     name: setup script
     runs-on: windows-latest
     steps:
@@ -93,6 +101,7 @@ jobs:
   # Produces the binaries to actually download and play through. This exists
   # because the machine this project is developed on has no compiler.
   windows:
+    timeout-minutes: 45
     name: windows build
     runs-on: windows-latest
     steps:
@@ -121,7 +130,7 @@ jobs:
         run: cmake --build native/build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir native/build -C Release --output-on-failure
+        run: ctest --test-dir native/build -C Release --output-on-failure --timeout 300
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4

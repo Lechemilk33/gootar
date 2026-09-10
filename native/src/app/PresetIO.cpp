@@ -100,6 +100,76 @@ juce::var getObj (const juce::var& parent, const char* key)
 
 } // namespace
 
+namespace {
+
+juce::var chainToVar (const std::vector<PresetChainBlock>& chain)
+{
+    juce::Array<juce::var> out;
+    for (const auto& block : chain)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("type", juce::String (toString (block.type)));
+        o->setProperty ("id", block.id);
+        o->setProperty ("enabled", block.enabled);
+
+        auto* params = new juce::DynamicObject();
+        for (const auto& [key, value] : block.params)
+            params->setProperty (juce::Identifier (key), value);
+        o->setProperty ("params", juce::var (params));
+
+        o->setProperty ("ref", block.hasRef ? assetToVar (block.ref) : juce::var());
+        out.add (juce::var (o));
+    }
+    return out;
+}
+
+std::vector<PresetChainBlock> chainFromVar (const juce::var& v)
+{
+    std::vector<PresetChainBlock> chain;
+    auto* array = v.getArray();
+    if (array == nullptr)
+        return chain;
+
+    for (const auto& item : *array)
+    {
+        auto* o = item.getDynamicObject();
+        if (o == nullptr)
+            continue;
+
+        PresetChainBlock block;
+        BlockType type {};
+        // An unknown block type means a preset from a newer build. Skipping it
+        // silently would change the sound without saying so, so the whole
+        // chain is discarded and the caller falls back to the stock one.
+        if (! blockTypeFromString (o->getProperty ("type").toString().toStdString(), type))
+            return {};
+
+        block.type = type;
+        block.id = o->getProperty ("id").toString();
+        block.enabled = o->hasProperty ("enabled")
+                          ? static_cast<bool> (o->getProperty ("enabled")) : true;
+
+        if (auto* params = o->getProperty ("params").getDynamicObject())
+            for (const auto& prop : params->getProperties())
+                block.params.emplace_back (prop.name.toString(),
+                                           static_cast<double> (prop.value));
+
+        const auto refVar = o->getProperty ("ref");
+        if (refVar.getDynamicObject() != nullptr)
+        {
+            block.ref = assetFromVar (refVar);
+            block.hasRef = block.ref.isValid();
+        }
+
+        if (block.id.isEmpty())
+            return {};
+        chain.push_back (std::move (block));
+    }
+    return chain;
+}
+
+} // namespace
+
 juce::String toJsonString (const Preset& p)
 {
     auto* root = new juce::DynamicObject();
@@ -153,6 +223,7 @@ juce::String toJsonString (const Preset& p)
     out->setProperty ("levelDb", p.params.outputLevelDb);
     out->setProperty ("mode", outputModeToString (p.params.outputMode));
     root->setProperty ("output", juce::var (out));
+    root->setProperty ("chain", chainToVar (p.chain));
 
     return juce::JSON::toString (juce::var (root), false);
 }
@@ -174,10 +245,11 @@ bool fromJsonString (const juce::String& json, Preset& out, juce::String& errorO
     }
 
     const int version = static_cast<int> (root->getProperty ("schemaVersion"));
-    if (version != Preset::kSchemaVersion)
+    if (version < Preset::kMinReadableVersion || version > Preset::kSchemaVersion)
     {
         errorOut = "unsupported preset schemaVersion " + juce::String (version)
-                 + " (this build reads version " + juce::String (Preset::kSchemaVersion) + ")";
+                 + " (this build reads " + juce::String (Preset::kMinReadableVersion)
+                 + " to " + juce::String (Preset::kSchemaVersion) + ")";
         return false;
     }
 
@@ -235,6 +307,10 @@ bool fromJsonString (const juce::String& json, Preset& out, juce::String& errorO
                 p.model = assetFromVar (slot->getProperty ("ref"));
                 p.slim = static_cast<double> (slot->getProperty ("slim"));
             }
+
+    // Version 1 has no chain; it describes the stock rig, and an empty chain
+    // is exactly how that is represented.
+    p.chain = chainFromVar (root->getProperty ("chain"));
 
     out = p;
     return true;
