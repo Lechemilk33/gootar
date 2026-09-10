@@ -129,3 +129,41 @@ test("an unknown block type is rejected rather than silently dropped", () => {
   };
   assert.equal(PresetSchema.safeParse(bogus).success, false);
 });
+
+test("editing a preset keeps what the editor cannot edit", async () => {
+  const { applyAmpControls, ampControlsFromPreset } = await import("./editing.ts");
+
+  const withBoard = PresetSchema.parse({
+    ...createPreset({ name: "Rig", model: modelRef }),
+    notes: "keep me",
+    gate: { enabled: true, thresholdDb: -42 },
+    chain: [
+      { type: "gain", id: "input", enabled: true, params: {}, ref: null },
+      {
+        type: "drive",
+        id: "drive-1",
+        enabled: true,
+        params: { drive: 8, tone: 3, level: 1.5 },
+        ref: null,
+      },
+      { type: "model", id: "model-1", enabled: true, params: {}, ref: modelRef },
+    ],
+  });
+
+  const controls = ampControlsFromPreset(withBoard);
+  const edited = applyAmpControls({
+    base: withBoard,
+    controls: { ...controls, bass: 8, outputLevelDb: -3 },
+  });
+
+  // What the editor changed:
+  assert.equal(edited.toneStack.bass, 8);
+  assert.equal(edited.output.levelDb, -3);
+
+  // What it must not have touched. The pedalboard is the one that actually
+  // regressed: saving from the librarian used to wipe it.
+  assert.equal(edited.chain.length, 3);
+  assert.equal(edited.chain[1]!.params["drive"], 8);
+  assert.equal(edited.gate.thresholdDb, -42);
+  assert.equal(edited.notes, "keep me");
+});

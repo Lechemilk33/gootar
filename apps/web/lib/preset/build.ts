@@ -2,7 +2,10 @@
 
 import {
   PresetSchema,
+  applyAmpControls,
+  ampControlsFromPreset,
   createPreset,
+  type AmpControls,
   type AssetRef,
   type LibraryEntry,
   type Preset,
@@ -12,24 +15,18 @@ import type { ChainParams } from "../audio/chain";
 
 /**
  * Presets are the contract between the two halves, so the mapping between what
- * the browser UI holds and what gets written to JSON lives in one place.
+ * this UI holds and what gets written to JSON lives in one place.
  *
- * The browser has no noise gate (see lib/audio/chain.ts), so gate settings are
- * carried through untouched rather than dropped: a preset saved here and opened
- * in the player must not silently lose its gate.
+ * The librarian edits the amp controls and nothing else. It has no noise gate
+ * and no pedalboard, so both are carried through untouched - a preset saved
+ * here and opened in the player must come back with its rig intact. That rule
+ * is enforced by applyAmpControls in the shared package rather than by hand
+ * here, because doing it by hand is how the pedalboard got dropped once
+ * already.
  */
 
 export function chainParamsFromPreset(p: Preset): ChainParams {
-  return {
-    inputLevelDb: p.input.levelDb,
-    toneStackEnabled: p.toneStack.enabled,
-    bass: p.toneStack.bass,
-    mid: p.toneStack.mid,
-    treble: p.toneStack.treble,
-    irEnabled: p.ir.enabled,
-    outputLevelDb: p.output.levelDb,
-    outputMode: p.output.mode,
-  };
+  return ampControlsFromPreset(p);
 }
 
 export function buildPreset(opts: {
@@ -38,35 +35,20 @@ export function buildPreset(opts: {
   model: AssetRef;
   ir?: AssetRef | null;
   tags?: string[];
-  /** Preserve gate settings from a preset that was opened, if there was one. */
+  /** The preset that was opened, if any. Everything unedited comes from here. */
   basedOn?: Preset | null;
 }): Preset {
-  const base = createPreset({ name: opts.name, model: opts.model, ir: opts.ir ?? null });
+  const base =
+    opts.basedOn ??
+    createPreset({ name: opts.name, model: opts.model, ir: opts.ir ?? null });
 
-  return PresetSchema.parse({
-    ...base,
-    tags: opts.tags ?? base.tags,
-    input: {
-      ...base.input,
-      levelDb: opts.params.inputLevelDb,
-    },
-    // The browser cannot audition the gate, so whatever the source preset said
-    // survives the round trip untouched.
-    gate: opts.basedOn?.gate ?? base.gate,
-    toneStack: {
-      enabled: opts.params.toneStackEnabled,
-      bass: opts.params.bass,
-      mid: opts.params.mid,
-      treble: opts.params.treble,
-    },
-    ir: {
-      enabled: opts.params.irEnabled,
-      ref: opts.ir ?? null,
-    },
-    output: {
-      levelDb: opts.params.outputLevelDb,
-      mode: opts.params.outputMode,
-    },
+  return applyAmpControls({
+    base,
+    controls: opts.params as AmpControls,
+    name: opts.name,
+    tags: opts.tags,
+    model: opts.model,
+    ir: opts.ir ?? null,
   });
 }
 
