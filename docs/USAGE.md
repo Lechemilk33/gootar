@@ -145,9 +145,12 @@ it again.
 
 ---
 
-## Building it yourself (optional)
+## Building it yourself
 
-Everything is verifiable locally if you ever do install a toolchain:
+**[`DEV-SETUP.md`](DEV-SETUP.md)** has the full Windows walkthrough — what to
+install, how big it is, and how to switch ASIO on, which CI cannot do for you.
+
+The short version:
 
 ```bash
 git clone --recurse-submodules https://github.com/Lechemilk33/gootar

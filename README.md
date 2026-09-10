@@ -58,6 +58,8 @@ two LSTMs.
 ## Docs
 
 - **[`docs/USAGE.md`](docs/USAGE.md)** — how to actually use it, start to finish
+- **[`docs/DEV-SETUP.md`](docs/DEV-SETUP.md)** — building locally on Windows, and
+  turning ASIO on (CI can't)
 - [`docs/AUDIT.md`](docs/AUDIT.md) — what was verified against upstream source,
   and the places the original plan needed changing
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the two halves fit
