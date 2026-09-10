@@ -66,9 +66,18 @@ int main()
     });
 
     // Audio thread: fixed-size blocks, must never touch the allocator.
+    // Audio thread: fixed-size blocks, must never touch the allocator.
+    //
+    // It runs until told to stop, NOT until the swapper is drained. Draining
+    // is not something the audio thread can guarantee on its own: applyStaged()
+    // refuses when every retire slot is full, and slots are only freed by the
+    // loader. Looping on "is anything staged" therefore spins forever the
+    // moment the loader stops collecting - which is what hung this test on
+    // Windows for 300 seconds while passing on Linux, purely on timing.
+    std::atomic<bool> stopAudio { false };
     std::thread audio ([&] {
         float buffer[64] {};
-        while (! loaderDone.load() || swapper.hasStaged())
+        while (! stopAudio.load (std::memory_order_relaxed))
         {
             if (swapper.applyStaged())
                 swaps.fetch_add (1);
@@ -85,12 +94,21 @@ int main()
             }
             blocks.fetch_add (1);
         }
-        // Drain anything staged after the loop condition was last checked.
-        while (swapper.applyStaged())
-            swaps.fetch_add (1);
     });
 
     loader.join();
+
+    // Keep freeing retired models so the audio thread can pick up whatever is
+    // still staged. This is the loader's job in the real app too - the engine
+    // does it on a timer - so doing it here is not a workaround, it is the
+    // contract.
+    for (int i = 0; i < 500 && swapper.hasStaged(); ++i)
+    {
+        swapper.collectRetired();
+        std::this_thread::sleep_for (std::chrono::milliseconds (1));
+    }
+
+    stopAudio.store (true);
     audio.join();
     swapper.collectRetired();
     } // swapper destroyed here

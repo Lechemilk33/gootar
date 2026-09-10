@@ -35,6 +35,13 @@ jobs:
       - name: Install audio build deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
 
+      # A header that only compiles because something else included <vector>
+      # first works here and fails on MSVC. Two CI rounds went on exactly that,
+      # so it is checked locally now.
+      - name: Headers are self-contained
+        working-directory: native
+        run: ./scripts/check-headers.sh
+
       - name: Build and test
         working-directory: native
         run: |

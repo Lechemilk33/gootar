@@ -43,7 +43,15 @@ namespace gootar {
  *   Audio thread:   swapper.applyStaged();             // once per block, top
  *                   if (auto* m = swapper.current()) m->Process(in, out, n);
  *
- * THREADING CONTRACT: exactly one audio thread and one loader thread.
+ * THREADING CONTRACT
+ *   Exactly one audio thread and one loader thread.
+ *
+ *   The loader MUST keep calling collectRetired() while anything is staged.
+ *   applyStaged() refuses when every retire slot is full, and only the loader
+ *   empties them - so a loader that stages a model and then stops collecting
+ *   leaves that model stuck forever. That is deliberate: declining the swap is
+ *   the only alternative to freeing on the audio thread. The engine satisfies
+ *   this by collecting on a timer as well as after each load.
  */
 template <typename T, std::size_t RetireSlots = 4>
 class ModelSwapper
