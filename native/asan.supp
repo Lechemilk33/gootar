@@ -1,0 +1,11 @@
+# LeakSanitizer suppressions.
+#
+# Keep this list tiny and specific. Suppressing by name keeps the leak check
+# meaningful for our own code; turning detect_leaks off would not.
+
+# NeuralAudio registers its model definitions once, into a static table it
+# never tears down. 32 bytes in 4 allocations, fixed regardless of how many
+# models are loaded - confirmed by loading six and still seeing four.
+# Upstream's choice, and harmless: it is allocated once at first load and lives
+# as long as the process.
+leak:EnsureModelDefsAreLoaded

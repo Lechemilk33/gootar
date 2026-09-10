@@ -41,6 +41,53 @@ juce::String ModelLibrary::hashFile (const juce::File& f)
     return juce::SHA256 (stream).toHexString();
 }
 
+juce::File ModelLibrary::guessDefaultRoot()
+{
+    const auto hasCaptures = [] (const juce::File& dir)
+    {
+        if (! dir.isDirectory())
+            return false;
+        juce::Array<juce::File> found;
+        dir.findChildFiles (found, juce::File::findFiles, true, "*.nam");
+        return ! found.isEmpty();
+    };
+
+    if (auto override_ = juce::SystemStats::getEnvironmentVariable ("GOOTAR_MODEL_DIR", {});
+        override_.isNotEmpty())
+    {
+        const juce::File dir { override_ };
+        if (dir.isDirectory())
+            return dir;
+    }
+
+    using SL = juce::File::SpecialLocationType;
+    const juce::File bases[] = {
+        juce::File::getSpecialLocation (SL::userDocumentsDirectory),
+        juce::File::getSpecialLocation (SL::userMusicDirectory),
+        juce::File::getSpecialLocation (SL::userHomeDirectory),
+    };
+    // Ordered by how likely they are to be the real library, not alphabetically.
+    const char* names[] = {
+        "NAM Models", "NAM", "Neural Amp Modeler", "Tone3000", "TONE3000",
+        "Captures", "Amp Models",
+    };
+
+    for (const auto& base : bases)
+        for (const auto* name : names)
+            if (const auto candidate = base.getChildFile (name); hasCaptures (candidate))
+                return candidate;
+
+    // Downloads is a last resort: it is where models land, but scanning a
+    // whole Downloads folder is slow and mostly finds nothing.
+    if (const auto downloads = juce::File::getSpecialLocation (SL::userHomeDirectory)
+                                  .getChildFile ("Downloads")
+                                  .getChildFile ("NAM");
+        hasCaptures (downloads))
+        return downloads;
+
+    return {};
+}
+
 void ModelLibrary::run()
 {
     if (! rootFolder.isDirectory())

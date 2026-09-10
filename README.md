@@ -23,6 +23,8 @@ Both halves work.
 | Preset schema | zod source of truth, 9 tests, emits JSON Schema for the C++ side |
 | Web librarian | imports + hashes + tags models, gapless A/B against a DI loop, preset save/load. NAM-in-the-browser **verified end to end** against a real capture |
 | Native player | full chain (gate / model / tone stack / IR / DC blocker / levels), model browser, hot-swap, preset I/O. Standalone **and** VST3 build |
+| Signal chain | an ordered list of blocks, not a fixed sequence: reorder it, or run two captures in series, without a rewrite |
+| Tuner | MPM pitch detection off the clean input, ±cents readout |
 | Hot-swap | 20k swaps against a live audio thread, clean under TSan and ASan/UBSan |
 
 **[How to use it → `docs/USAGE.md`](docs/USAGE.md)**
@@ -33,19 +35,23 @@ Both halves work.
 
 ## Quick start
 
-```bash
+**Windows**, all of it in one go:
+
+```powershell
 git clone --recurse-submodules https://github.com/Lechemilk33/gootar
 cd gootar
-
-npm install
-npm run build        # schema, then web
-npm run dev          # librarian at localhost:3000
+.\setup.ps1          # or double-click setup.bat
 ```
 
-Native side (no compiler on your machine? CI builds the `.exe` — see
-[USAGE](docs/USAGE.md)):
+Installs what is missing, lists your ASIO drivers, finds your captures, builds
+the player and the VST3, runs the tests. See
+[`docs/DEV-SETUP.md`](docs/DEV-SETUP.md).
+
+**Anywhere**, by hand:
 
 ```bash
+npm install && npm run build && npm run dev   # librarian on :3000
+
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
 cmake --build native/build --parallel
 ctest --test-dir native/build --output-on-failure
@@ -97,8 +103,9 @@ the shared schema package will not be built before the app that imports it.
 4. ~~Gate + EQ + levels in the right order~~ done
 5. ~~Preset save/load~~ done
 6. ~~Model browser + hot-swap while playing~~ done — the product
-7. Chain multiple models (pedal → amp) — the preset format already carries an
-   array of model slots, so this is a UI and engine change, not a format change
+7. ~~Chain multiple models (pedal → amp)~~ done in the engine — two captures in
+   series is a chain edit, and a test covers it. What is left is a UI for
+   reordering the board, and persisting a custom order in the preset file
 
 VST3 was never a milestone in the end: JUCE builds Standalone and VST3 as two
 formats of one target, on from the start.

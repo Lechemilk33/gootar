@@ -53,6 +53,8 @@ if(EXISTS "${GOOTAR_NA}/CMakeLists.txt" AND EXISTS "${GOOTAR_ADT}/dsp/dsp.cpp")
     "${GOOTAR_ADT}/dsp/RecursiveLinearFilter.cpp"
     "${GOOTAR_ADT}/dsp/ImpulseResponse.cpp"
     "${GOOTAR_ADT}/dsp/wav.cpp"
+    src/dsp/Chain.cpp
+    src/dsp/PitchDetector.cpp
     src/dsp/GootarEngine.cpp)
 
   # PUBLIC is only "src", so anything linking the engine sees GootarEngine.h
@@ -105,7 +107,9 @@ if(GOOTAR_BUILD_APP AND TARGET gootar_engine AND EXISTS "${GOOTAR_LIBS}/JUCE/CMa
     src/app/PluginProcessor.cpp
     src/app/PluginEditor.cpp
     src/app/PresetIO.cpp
-    src/app/ModelLibrary.cpp)
+    src/app/ModelLibrary.cpp
+    src/app/Theme.cpp
+    src/app/Widgets.cpp)
 
   target_include_directories(GootarPlayer PRIVATE src src/app)
 

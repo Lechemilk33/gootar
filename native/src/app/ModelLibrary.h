@@ -69,6 +69,19 @@ public:
 
     static juce::String hashFile (const juce::File&);
 
+    /**
+     * Where captures probably already live on this machine.
+     *
+     * Checked on first run so the app opens with your library in it rather
+     * than an empty list and a folder picker. Returns the first candidate that
+     * exists AND actually contains a .nam, because an empty "NAM" folder
+     * someone made once is a worse default than none.
+     *
+     * GOOTAR_MODEL_DIR overrides everything, which is handy for a second
+     * library on an external drive - or for testing.
+     */
+    static juce::File guessDefaultRoot();
+
 private:
     void run() override;
     void loadCache();

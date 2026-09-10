@@ -63,7 +63,21 @@ public:
     juce::File currentModelFile() const;
     juce::File currentIRFile() const;
     juce::String lastError() const;
-    ModelInfo modelInfo() const { return engine.modelInfo(); }
+    ModelInfo modelInfo() const { return engine.modelInfo (0); }
+
+    /** The chain as it currently stands, for the UI strip. */
+    std::vector<ChainSlot> chainSpec() const { return engine.currentChain(); }
+    int numModelSlots() const { return engine.numModelSlots(); }
+
+    float inputPeak() const noexcept { return engine.inputPeak(); }
+    float outputPeak() const noexcept { return engine.outputPeak(); }
+
+    /**
+     * Latest tuner reading. Refreshed on this processor's timer rather than in
+     * the editor, so closing the window does not stop it and the plugin has a
+     * consistent answer whether or not anyone is looking.
+     */
+    PitchReading latestPitch() const;
 
     /** Build a preset from the current state, and apply one. */
     Preset capturePreset (const juce::String& name) const;
@@ -107,6 +121,9 @@ private:
     juce::String errorMessage;
 
     juce::AudioBuffer<float> monoScratch;
+
+    mutable juce::CriticalSection pitchLock;
+    PitchReading lastPitch;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GootarProcessor)
 };

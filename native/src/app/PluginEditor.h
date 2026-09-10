@@ -4,16 +4,18 @@
 
 #include "ModelLibrary.h"
 #include "PluginProcessor.h"
+#include "Theme.h"
+#include "Widgets.h"
 
 namespace gootar {
 
 /**
- * The browser-first UI.
+ * Browser-first layout.
  *
- * The whole point of the project is that switching models is a single click
- * that does not interrupt playing, so the model list is the main object on
- * screen and the knobs sit underneath it — the opposite of the stock plugin,
- * where the model is a file path you have to go hunting for.
+ * The whole point of the project is that switching captures is one click that
+ * does not interrupt playing, so the model list is the largest thing on screen
+ * and the knobs sit under it. That is the opposite of the stock plugin, where
+ * the model is a file path you go hunting for through a dialog.
  */
 class GootarEditor : public juce::AudioProcessorEditor,
                      private juce::ListBoxModel,
@@ -29,11 +31,9 @@ public:
 
 private:
     // ListBoxModel
-    int getNumRows() override;
+    int  getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
     void listBoxItemClicked (int row, const juce::MouseEvent&) override;
-    /** Load whatever is on this row - the one action the whole UI exists for. */
-    void auditionRow (int row);
     void selectedRowsChanged (int lastRowSelected) override;
 
     // ModelLibrary::Listener
@@ -42,45 +42,71 @@ private:
 
     void timerCallback() override;
 
+    /** Load whatever is on this row - the one action the whole UI exists for. */
+    void auditionRow (int row);
+
     void chooseLibraryFolder();
     void chooseIR();
     void savePreset();
     void loadPreset();
     void refreshFilter();
-    void updateStatus();
+    void refreshStatus();
+    void refreshChainStrip();
+    void refreshInfoPanel();
 
-    struct KnobAttachment
+    struct Knob
     {
         juce::Slider slider;
-        juce::Label label;
+        juce::Label  caption;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };
 
-    void addKnob (KnobAttachment&, const juce::String& paramID, const juce::String& text);
+    void addKnob (Knob&, const juce::String& paramID, const juce::String& caption);
     void addToggle (juce::ToggleButton&,
                     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>&,
-                    const juce::String& paramID, const juce::String& text);
+                    const juce::String& paramID, const juce::String& caption);
+    void styleButton (juce::TextButton&, bool accent = false);
 
     GootarProcessor& processor;
+    GootarLookAndFeel lookAndFeel;
 
-    juce::TextButton libraryButton { "Model folder..." };
-    juce::TextButton irButton { "Load IR..." };
-    juce::TextButton clearIRButton { "No IR" };
-    juce::TextButton savePresetButton { "Save preset" };
-    juce::TextButton loadPresetButton { "Load preset" };
+    juce::TextButton libraryButton { "Model folder" };
+    juce::TextButton irButton      { "Load IR" };
+    juce::TextButton clearIRButton { "Clear IR" };
+    juce::TextButton saveButton    { "Save preset" };
+    juce::TextButton loadButton    { "Open preset" };
 
     juce::TextEditor searchBox;
-    juce::ListBox modelList { "models", this };
-    juce::Label statusLabel;
-    juce::Label nowPlayingLabel;
+    juce::ListBox    modelList { "models", this };
+    juce::Label      nowPlaying;
+    juce::Label      statusLine;
 
-    KnobAttachment inputKnob, gateKnob, bassKnob, midKnob, trebleKnob, outputKnob;
+    TunerDisplay tuner;
+    ChainStrip   chainStrip;
+    InfoPanel    infoPanel;
+    LevelMeter   inputMeter { "IN" };
+    LevelMeter   outputMeter { "OUT" };
+
+    Knob inputKnob, gateKnob, bassKnob, midKnob, trebleKnob, outputKnob;
     juce::ToggleButton gateToggle, eqToggle, irToggle;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
         gateAttach, eqAttach, irAttach;
 
     juce::ComboBox outputModeBox;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> outputModeAttach;
+
+    /**
+     * Panel rectangles, computed once in resized() and only read by paint().
+     *
+     * Having paint() work out its own bounds is how a JUCE layout silently
+     * drifts: the two copies of the arithmetic agree until one of them is
+     * edited, and then panels sit a few pixels off from the controls inside
+     * them. One source, two readers.
+     */
+    struct Layout
+    {
+        juce::Rectangle<int> list, tuner, meters, chain, info, knobs;
+    } layout;
 
     juce::Array<LibraryItem> filtered;
     std::unique_ptr<juce::FileChooser> chooser;

@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "native/**"
+      - "setup.ps1"
       - ".github/workflows/native.yml"
   pull_request:
     paths:
       - "native/**"
+      - "setup.ps1"
   workflow_dispatch:
 
 jobs:
@@ -46,6 +48,11 @@ jobs:
 
       - name: AddressSanitizer + UBSan
         working-directory: native
+        # Leak detection stays ON. asan.supp suppresses exactly one known
+        # upstream leak by name (NeuralAudio's one-time model-definition
+        # registration), so the check keeps its teeth for our own code.
+        env:
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/native/asan.supp
         run: |
           cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DGOOTAR_BUILD_APP=OFF \
@@ -54,6 +61,34 @@ jobs:
           cmake --build build-asan --parallel
           ./build-asan/gootar_model_swapper_test
           ./build-asan/gootar_engine_test
+
+  # setup.ps1 is the first thing a fresh machine runs. A syntax error there is
+  # a completely broken install, so it gets parsed on every change.
+  setup-script:
+    name: setup script
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse setup.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/setup.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            foreach ($e in $errors) {
+              Write-Host "line $($e.Extent.StartLineNumber): $($e.Message)"
+            }
+            exit 1
+          }
+          Write-Host "setup.ps1 parses cleanly"
+
+      - name: Detection runs without error
+        shell: pwsh
+        # -SkipInstall exercises tool detection and the early-exit path without
+        # installing several GB on a CI runner.
+        run: ./setup.ps1 -SkipInstall; if ($LASTEXITCODE -gt 1) { exit 1 }
 
   # Produces the binaries to actually download and play through. This exists
   # because the machine this project is developed on has no compiler.

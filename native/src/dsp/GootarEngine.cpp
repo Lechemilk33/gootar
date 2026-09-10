@@ -6,74 +6,71 @@
 #include <mutex>
 #include <vector>
 
-#include "ImpulseResponse.h"
-#include "NoiseGate.h"
-#include "RecursiveLinearFilter.h"
-
 #include "../ModelSwapper.h"
-#include "ToneStack.h"
-
-#include "NeuralAudio/NeuralModel.h"
+#include "Chain.h"
+#include "PitchDetector.h"
+#include "blocks/GainBlock.h"
+#include "blocks/IRBlock.h"
+#include "blocks/ModelBlock.h"
+#include "blocks/ToneStackBlock.h"
 
 namespace gootar {
 
 namespace {
-
-inline double dbToGain (double db) noexcept { return std::pow (10.0, db / 20.0); }
 
 inline double clampd (double v, double lo, double hi) noexcept
 {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-/** Gate trigger constants, hard-coded in the stock plugin's ProcessBlock.
-    Only the threshold is a parameter. */
-constexpr double kGateTime      = 0.01;
-constexpr double kGateRatio     = 0.1;
-constexpr double kGateOpenTime  = 0.005;
-constexpr double kGateHoldTime  = 0.01;
-constexpr double kGateCloseTime = 0.05;
-
-/** kDCBlockerFrequency */
-constexpr double kDcBlockerHz = 5.0;
-
 /** One mono channel throughout, as in the stock plugin. */
 constexpr int kChannels = 1;
+
+/** ~43 ms at 48 k: long enough to resolve a low E, short enough to feel live. */
+constexpr int kAnalysisWindow = 2048;
 
 } // namespace
 
 struct GootarEngine::Impl
 {
-    ModelSwapper<NeuralAudio::NeuralModel> modelSwapper;
-    ModelSwapper<::dsp::ImpulseResponse>   irSwapper;
-
-    ::dsp::noise_gate::Trigger gateTrigger;
-    ::dsp::noise_gate::Gain    gateGain;
-    ToneStack                  toneStack;
-    recursive_linear_filter::HighPass dcBlocker;
+    BlockRegistry registry;
+    ModelSwapper<Chain> chainSwapper;
+    std::vector<ChainSlot> spec = standardChainSpec();
+    mutable std::mutex specMutex;
 
     std::vector<DSP_SAMPLE>  monoBuffer;
     std::vector<DSP_SAMPLE*> monoPointers;
-    std::vector<float>       modelIn, modelOut;
+    std::vector<float>       analysisScratch;
 
     Params params;
 
     double currentSampleRate = 48000.0;
     int    currentMaxBlock = 512;
     bool   prepared = false;
-    double lastDcBlockerRate = -1.0;
 
-    std::atomic<double> loadedModelRate { 0.0 };
-    mutable std::mutex  infoMutex;
-    ModelInfo           info;
+    std::atomic<float> peakIn { 0.0f };
+    std::atomic<float> peakOut { 0.0f };
 
-    Impl()
-    {
-        // The trigger pushes its computed gain reduction to the gain stage,
-        // which is what lets the gate detect pre-model and apply post-model.
-        gateTrigger.AddListener (&gateGain);
-    }
+    AnalysisTap   tap;
+    PitchDetector detector;
+
+    ModelBlock* modelForSlot (int slot);
+    IRBlock*    irBlock();
 };
+
+namespace {
+
+/** Id of the Nth block of a given type in a spec, or empty. */
+std::string slotId (const std::vector<ChainSlot>& spec, BlockType type, int index)
+{
+    int seen = 0;
+    for (const auto& slot : spec)
+        if (slot.type == type && seen++ == index)
+            return slot.id;
+    return {};
+}
+
+} // namespace
 
 GootarEngine::GootarEngine() : impl (std::make_unique<Impl>()) {}
 GootarEngine::~GootarEngine() = default;
@@ -91,19 +88,26 @@ void GootarEngine::prepare (double sampleRateHz, int maxBlock)
     s.monoPointers.assign (kChannels, nullptr);
     s.monoPointers[0] = s.monoBuffer.data();
 
-    s.modelIn.assign (static_cast<size_t> (s.currentMaxBlock), 0.0f);
-    s.modelOut.assign (static_cast<size_t> (s.currentMaxBlock), 0.0f);
+    s.registry.prepareAll (s.currentSampleRate, s.currentMaxBlock);
 
-    s.toneStack.prepare (s.currentSampleRate);
-    s.gateTrigger.SetSampleRate (s.currentSampleRate);
+    s.tap.prepare (kAnalysisWindow);
+    s.detector.prepare (s.currentSampleRate, kAnalysisWindow);
+    s.analysisScratch.assign (kAnalysisWindow, 0.0f);
 
-    s.lastDcBlockerRate = -1.0; // force the DC blocker to recompute
+    std::vector<ChainSlot> specCopy;
+    {
+        std::lock_guard<std::mutex> lock (s.specMutex);
+        specCopy = s.spec;
+    }
+    s.chainSwapper.stage (Chain::build (specCopy, s.registry,
+                                        s.currentSampleRate, s.currentMaxBlock));
     s.prepared = true;
 }
 
 void GootarEngine::setParams (const Params& p) noexcept
 {
-    auto& q = impl->params;
+    auto& s = *impl;
+    auto& q = s.params;
     q = p;
     q.inputLevelDb  = clampd (p.inputLevelDb, -20.0, 20.0);
     q.outputLevelDb = clampd (p.outputLevelDb, -40.0, 40.0);
@@ -124,189 +128,259 @@ void GootarEngine::process (const float* input, float* output, int numSamples) n
     // but silently corrupting memory is not the way to report it.
     const int n = std::min (numSamples, s.currentMaxBlock);
 
-    // Pick up a staged model/IR. The only place a swap happens.
-    s.modelSwapper.applyStaged();
-    s.irSwapper.applyStaged();
+    s.chainSwapper.applyStaged();
+    auto* chain = s.chainSwapper.current();
+    if (chain == nullptr)
+    {
+        for (int i = 0; i < numSamples; ++i)
+            output[i] = 0.0f;
+        return;
+    }
 
-    auto* model = s.modelSwapper.current();
-    auto* ir    = s.irSwapper.current();
     const auto& params = s.params;
 
-    // --- 1. input level (and input calibration) ---------------------------
-    double inputGainDb = params.inputLevelDb;
-    if (params.calibrateInput && model != nullptr)
-        inputGainDb += static_cast<double> (model->GetRecommendedInputDBAdjustment());
+    // Push the CLEAN input to the tuner before anything touches it.
+    s.tap.push (input, n);
 
-    const double inGain = dbToGain (inputGainDb);
+    float inPeak = 0.0f;
     for (int i = 0; i < n; ++i)
-        s.monoBuffer[static_cast<size_t> (i)] = static_cast<DSP_SAMPLE> (input[i]) * inGain;
-
-    // --- 2. gate TRIGGER, on the clean input ------------------------------
-    DSP_SAMPLE** stage = s.monoPointers.data();
-    if (params.gateEnabled)
     {
-        const ::dsp::noise_gate::TriggerParams triggerParams (
-            kGateTime, params.gateThresholdDb, kGateRatio,
-            kGateOpenTime, kGateHoldTime, kGateCloseTime);
-        s.gateTrigger.SetParams (triggerParams);
-        s.gateTrigger.SetSampleRate (s.currentSampleRate);
-        stage = s.gateTrigger.Process (s.monoPointers.data(), kChannels, static_cast<size_t> (n));
+        const float v = input[i];
+        inPeak = std::max (inPeak, std::abs (v));
+        s.monoBuffer[static_cast<size_t> (i)] = static_cast<DSP_SAMPLE> (v);
+    }
+    s.peakIn.store (inPeak, std::memory_order_relaxed);
+
+    // --- push parameters into the blocks (pointer chasing only) -----------
+    const auto& models = chain->models();
+    ModelBlock* firstModel = models.empty() ? nullptr : models.front();
+
+    if (auto* gain = chain->inputGain())
+    {
+        gain->setLevelDb (params.inputLevelDb);
+        gain->setCalibrationOffsetDb (
+            (params.calibrateInput && firstModel != nullptr && firstModel->isLoaded())
+                ? static_cast<double> (firstModel->inputAdjustmentDb())
+                : 0.0);
     }
 
-    // --- 3. the model ------------------------------------------------------
-    if (model != nullptr)
+    chain->setGateThresholdDb (params.gateThresholdDb);
+    chain->setEnabled (BlockType::Gate, params.gateEnabled);
+    chain->setEnabled (BlockType::ToneStack, params.toneStackEnabled);
+    chain->setEnabled (BlockType::IR, params.irEnabled);
+
+    if (auto* tone = chain->firstToneStack())
+        tone->setKnobs (params.bass, params.mid, params.treble);
+
+    if (auto* gain = chain->outputGain())
     {
-        for (int i = 0; i < n; ++i)
-            s.modelIn[static_cast<size_t> (i)] = static_cast<float> (stage[0][i]);
-
-        model->Process (s.modelIn.data(), s.modelOut.data(), static_cast<size_t> (n));
-
-        for (int i = 0; i < n; ++i)
-            s.monoBuffer[static_cast<size_t> (i)] =
-                static_cast<DSP_SAMPLE> (s.modelOut[static_cast<size_t> (i)]);
-    }
-    else if (stage != s.monoPointers.data())
-    {
-        // No model: carry the gate's output forward unchanged.
-        for (int i = 0; i < n; ++i)
-            s.monoBuffer[static_cast<size_t> (i)] = stage[0][i];
-    }
-    stage = s.monoPointers.data();
-
-    // --- 4. gate GAIN, after the model ------------------------------------
-    if (params.gateEnabled)
-        stage = s.gateGain.Process (stage, kChannels, static_cast<size_t> (n));
-
-    // --- 5. tone stack -----------------------------------------------------
-    if (params.toneStackEnabled)
-    {
-        s.toneStack.setKnobs (params.bass, params.mid, params.treble);
-        stage = s.toneStack.process (stage, kChannels, n);
+        gain->setLevelDb (params.outputLevelDb);
+        // Normalisation follows the LAST model in the chain, since that is
+        // what sets the level actually leaving the amp.
+        ModelBlock* lastModel = models.empty() ? nullptr : models.back();
+        gain->setCalibrationOffsetDb (
+            (params.outputMode != OutputMode::Raw && lastModel != nullptr && lastModel->isLoaded())
+                ? static_cast<double> (lastModel->outputAdjustmentDb())
+                : 0.0);
     }
 
-    // --- 6. IR -------------------------------------------------------------
-    if (params.irEnabled && ir != nullptr)
-        stage = ir->Process (stage, kChannels, static_cast<size_t> (n));
+    // --- run the chain -----------------------------------------------------
+    DSP_SAMPLE** result = chain->process (s.monoPointers.data(), kChannels, n);
 
-    // --- 7. DC blocker (5 Hz high-pass) ------------------------------------
-    if (s.lastDcBlockerRate != s.currentSampleRate)
-    {
-        const recursive_linear_filter::HighPassParams hp (s.currentSampleRate, kDcBlockerHz);
-        s.dcBlocker.SetParams (hp);
-        s.lastDcBlockerRate = s.currentSampleRate;
-    }
-    stage = s.dcBlocker.Process (stage, kChannels, static_cast<size_t> (n));
-
-    // --- 8. output level ---------------------------------------------------
-    double outputGainDb = params.outputLevelDb;
-    if (params.outputMode != OutputMode::Raw && model != nullptr)
-        outputGainDb += static_cast<double> (model->GetRecommendedOutputDBAdjustment());
-
-    const double outGain = dbToGain (outputGainDb);
+    float outPeak = 0.0f;
     for (int i = 0; i < n; ++i)
-        output[i] = static_cast<float> (stage[0][i] * outGain);
+    {
+        const auto v = static_cast<float> (result[0][i]);
+        outPeak = std::max (outPeak, std::abs (v));
+        output[i] = v;
+    }
+    s.peakOut.store (outPeak, std::memory_order_relaxed);
 
-    // A host that asked for more samples than we prepared for gets silence in
-    // the tail rather than stale memory.
     for (int i = n; i < numSamples; ++i)
         output[i] = 0.0f;
 }
 
-bool GootarEngine::stageModel (const std::filesystem::path& path, std::string& errorOut)
+// --- loading ---------------------------------------------------------------
+
+/**
+ * Resolve a model slot on the LOADER thread.
+ *
+ * Deliberately not via chainSwapper.current(): a chain that has been staged is
+ * not current until the audio thread picks it up, so anything routed through
+ * the live chain fails for the first few milliseconds after prepare() - which
+ * is exactly when a preset tries to load its model. Blocks are owned by the
+ * registry, so the loader thread can resolve them from the spec without
+ * involving the audio thread at all.
+ */
+ModelBlock* GootarEngine::Impl::modelForSlot (int slot)
 {
-    auto& s = *impl;
-
-    NeuralAudio::NeuralModelLoader loader;
-    loader.SetExternalSampleRate (static_cast<int> (s.currentSampleRate));
-    loader.SetDefaultMaxAudioBufferSize (s.currentMaxBlock);
-    loader.SetAudioInputLevelDBu (static_cast<float> (s.params.inputCalibrationLevelDbu));
-
-    // doPrewarm defaults to true: these are stateful recurrent nets and the
-    // first samples out of a cold model are garbage. NeuralAudio handles it.
-    NeuralAudio::NeuralModel* raw = nullptr;
-    try
+    std::string id;
     {
-        raw = loader.CreateFromFile (path);
+        std::lock_guard<std::mutex> lock (specMutex);
+        id = slotId (spec, BlockType::Model, slot);
     }
-    catch (const std::exception& e)
-    {
-        errorOut = e.what();
-        return false;
-    }
-
-    if (raw == nullptr)
-    {
-        errorOut = "could not load \"" + path.filename().string() + "\"";
-        return false;
-    }
-
-    raw->SetMaxAudioBufferSize (s.currentMaxBlock);
-    raw->SetAudioInputLevelDBu (static_cast<float> (s.params.inputCalibrationLevelDbu));
-
-    {
-        std::lock_guard<std::mutex> lock (s.infoMutex);
-        s.info.loaded = true;
-        s.info.fileName = path.filename().string();
-        s.info.architecture = raw->GetMetadata ("architecture");
-        s.info.sampleRate = raw->GetSampleRate();
-        s.info.receptiveField = raw->GetReceptiveFieldSize();
-        s.info.isStatic = raw->IsStatic();
-    }
-    s.loadedModelRate.store (s.currentSampleRate);
-
-    s.modelSwapper.stage (std::unique_ptr<NeuralAudio::NeuralModel> (raw));
-    return true;
+    if (id.empty())
+        return nullptr;
+    return dynamic_cast<ModelBlock*> (
+        registry.getOrCreate (BlockType::Model, id, currentSampleRate, currentMaxBlock));
 }
 
-void GootarEngine::clearModel()
+IRBlock* GootarEngine::Impl::irBlock()
 {
-    impl->modelSwapper.stage (nullptr);
-    std::lock_guard<std::mutex> lock (impl->infoMutex);
-    impl->info = ModelInfo {};
+    std::string id;
+    {
+        std::lock_guard<std::mutex> lock (specMutex);
+        id = slotId (spec, BlockType::IR, 0);
+    }
+    if (id.empty())
+        return nullptr;
+    return dynamic_cast<IRBlock*> (
+        registry.getOrCreate (BlockType::IR, id, currentSampleRate, currentMaxBlock));
 }
 
-bool GootarEngine::stageIR (const std::filesystem::path& path, std::string& errorOut)
+bool GootarEngine::loadModel (int slot, const std::filesystem::path& path, std::string& errorOut)
 {
-    try
+    auto* block = impl->modelForSlot (slot);
+    if (block == nullptr)
     {
-        auto ir = std::make_unique<::dsp::ImpulseResponse> (path.string().c_str(),
-                                                            impl->currentSampleRate);
-        if (ir->GetWavState() != ::dsp::wav::LoadReturnCode::SUCCESS)
-        {
-            errorOut = "could not read IR \"" + path.filename().string() + "\"";
-            return false;
-        }
-        impl->irSwapper.stage (std::move (ir));
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        errorOut = e.what();
+        errorOut = "no model slot " + std::to_string (slot) + " in this chain";
         return false;
     }
+    return block->load (path, impl->params.inputCalibrationLevelDbu, errorOut);
+}
+
+void GootarEngine::clearModel (int slot)
+{
+    if (auto* block = impl->modelForSlot (slot))
+        block->unload();
+}
+
+bool GootarEngine::loadIR (const std::filesystem::path& path, std::string& errorOut)
+{
+    auto* ir = impl->irBlock();
+    if (ir == nullptr) { errorOut = "no IR block in this chain"; return false; }
+    return ir->load (path, errorOut);
 }
 
 void GootarEngine::clearIR()
 {
-    impl->irSwapper.stage (nullptr);
+    if (auto* ir = impl->irBlock())
+        ir->unload();
+}
+
+void GootarEngine::setChain (const std::vector<ChainSlot>& spec)
+{
+    auto& s = *impl;
+    {
+        std::lock_guard<std::mutex> lock (s.specMutex);
+        s.spec = spec;
+    }
+    s.chainSwapper.stage (Chain::build (spec, s.registry, s.currentSampleRate, s.currentMaxBlock));
+}
+
+std::vector<ChainSlot> GootarEngine::currentChain() const
+{
+    std::lock_guard<std::mutex> lock (impl->specMutex);
+    return impl->spec;
 }
 
 void GootarEngine::collectGarbage() noexcept
 {
-    impl->modelSwapper.collectRetired();
-    impl->irSwapper.collectRetired();
+    auto& s = *impl;
+    s.chainSwapper.collectRetired();
+    s.registry.collectGarbage();
+    // Pruning must come after the retired chains are gone, or a chain the
+    // audio thread still holds could reference a block we just destroyed.
+    if (auto* chain = s.chainSwapper.current())
+        s.registry.prune (chain->referencedIds());
 }
 
 bool GootarEngine::modelNeedsReload() const noexcept
 {
-    const double loadedAt = impl->loadedModelRate.load();
-    return loadedAt > 0.0 && loadedAt != impl->currentSampleRate;
+    const auto spec = currentChain();
+    for (const auto& slot : spec)
+        if (slot.type == BlockType::Model)
+            if (auto* m = dynamic_cast<ModelBlock*> (impl->registry.find (slot.id)))
+                if (m->needsReload())
+                    return true;
+    return false;
 }
 
-ModelInfo GootarEngine::modelInfo() const
+int GootarEngine::numModelSlots() const noexcept
 {
-    std::lock_guard<std::mutex> lock (impl->infoMutex);
-    return impl->info;
+    const auto spec = currentChain();
+    int n = 0;
+    for (const auto& slot : spec)
+        if (slot.type == BlockType::Model)
+            ++n;
+    return n;
+}
+
+ModelInfo GootarEngine::modelInfo (int slot) const
+{
+    ModelInfo out;
+    const auto spec = currentChain();
+    const auto id = slotId (spec, BlockType::Model, slot);
+    if (id.empty())
+        return out;
+    auto* block = dynamic_cast<ModelBlock*> (impl->registry.find (id));
+    if (block == nullptr)
+        return out;
+
+    const auto info = block->info();
+    out.loaded = info.loaded;
+    out.fileName = info.fileName;
+    out.filePath = info.filePath;
+    out.architecture = info.architecture;
+    out.sampleRate = info.sampleRate;
+    out.receptiveField = info.receptiveField;
+    out.isStatic = info.isStatic;
+    return out;
+}
+
+std::string GootarEngine::irFileName() const
+{
+    const auto spec = currentChain();
+    const auto id = slotId (spec, BlockType::IR, 0);
+    if (id.empty())
+        return {};
+    if (auto* ir = dynamic_cast<IRBlock*> (impl->registry.find (id)))
+        return ir->info().fileName;
+    return {};
+}
+
+float GootarEngine::inputPeak() const noexcept
+{
+    return impl->peakIn.load (std::memory_order_relaxed);
+}
+
+float GootarEngine::outputPeak() const noexcept
+{
+    return impl->peakOut.load (std::memory_order_relaxed);
+}
+
+PitchReading GootarEngine::analysePitch()
+{
+    auto& s = *impl;
+    PitchReading reading;
+
+    const float* window = s.tap.readLatest();
+    if (window == nullptr)
+        return reading;
+
+    const auto result = s.detector.analyse (window, s.tap.windowSize());
+    reading.voiced = result.voiced;
+    reading.frequencyHz = result.frequencyHz;
+    reading.clarity = result.clarity;
+    reading.midiNote = result.midiNote;
+    reading.cents = result.cents;
+    reading.rms = result.rms;
+    if (result.voiced)
+    {
+        reading.noteName = PitchDetector::noteName (result.midiNote);
+        reading.nearestString = PitchDetector::nearestOpenString (result.midiNote);
+    }
+    return reading;
 }
 
 } // namespace gootar

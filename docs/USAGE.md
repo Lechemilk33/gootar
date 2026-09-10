@@ -36,7 +36,10 @@ small settings file under `%APPDATA%\Gootar`.
 
 ## 2. First run
 
-1. Launch `Gootar Player.exe`.
+1. Launch `Gootar Player.exe`. On first run it looks for your captures in the
+   usual places (`Documents\NAM Models`, `Documents\NAM`, `Music\NAM` and a
+   few others) and loads them automatically. Set `GOOTAR_MODEL_DIR` to point
+   somewhere else — an external drive, say.
 2. **Options → Audio/MIDI Settings**: choose your interface, set the sample
    rate to **48000 Hz**, and the buffer to 64 or 128 samples.
 
@@ -57,6 +60,21 @@ The orange bar marks what's currently loaded. The status line underneath shows
 how many files matched, the model's sample rate, and which IR is loaded.
 
 ---
+
+## 2b. The tuner
+
+Top right, always live. It reads the **clean** signal before the model, which
+matters: distortion piles on harmonics and squashes the dynamics a pitch
+tracker needs, so a tuner fed the amp output reports a confidently wrong note.
+
+The note goes green within ±5 cents, amber to ±20, red beyond. Green is
+deliberately not "perfect" — a guitar will not hold better than a few cents,
+and a tuner that demands perfection is one you stop looking at.
+
+Under it: input and output meters (green, amber near clipping, red at it), the
+signal chain as it currently stands, and details of the loaded capture. That
+last panel flags a model running on the **dynamic** path rather than a
+hand-optimised static one, which costs noticeably more CPU.
 
 ## 3. The controls
 

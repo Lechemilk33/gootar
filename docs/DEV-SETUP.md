@@ -16,6 +16,29 @@ for catching the concurrency bugs you'd never spot by ear.
 
 ---
 
+## The easy way
+
+```powershell
+git clone --recurse-submodules https://github.com/Lechemilk33/gootar
+cd gootar
+.\setup.ps1
+```
+
+Or just double-click **`setup.bat`** if you would rather not think about
+PowerShell execution policies.
+
+It checks what you already have, installs only what is missing (via `winget`,
+which ships with Windows — nothing exotic), fetches the submodules, **lists the
+ASIO drivers it finds on your machine**, looks for your capture folder, builds
+both the standalone and the VST3, runs the engine tests, and offers to launch
+the player.
+
+Running it again is safe: it skips anything already done. `-Clean` forces a
+fresh build, `-SkipInstall` checks and builds without installing anything.
+
+The rest of this page is what the script does, for when you want to do a
+step yourself or something goes sideways.
+
 ## What to install
 
 | | Size | Why |
@@ -80,7 +103,8 @@ the kind of bug you cannot hear until you're already recording.
 
 ## Turn ASIO on
 
-This is the point of building locally.
+This is the point of building locally. `setup.ps1` does steps 3 and 4 for you
+once the SDK is in place — it detects the SDK and flips the flag automatically.
 
 1. Download the **ASIO SDK** from Steinberg's developer site.
 2. Unzip it to `native/libs/asiosdk`, so that this path exists:

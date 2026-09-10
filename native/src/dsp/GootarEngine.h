@@ -3,6 +3,9 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include "ChainSpec.h"
 
 namespace gootar {
 
@@ -34,38 +37,50 @@ struct Params
 struct ModelInfo
 {
     bool        loaded = false;
-    std::string fileName;
-    std::string architecture;
+    std::string fileName, filePath, architecture;
     float       sampleRate = 0.0f;
     int         receptiveField = -1;
     bool        isStatic = false;
 };
 
+/** What the tuner display needs. Filled by analysePitch() off the audio thread. */
+struct PitchReading
+{
+    bool   voiced = false;
+    double frequencyHz = 0.0;
+    double clarity = 0.0;
+    int    midiNote = 0;
+    double cents = 0.0;
+    double rms = 0.0;
+    std::string noteName;
+    std::string nearestString;
+};
+
 /**
- * The complete Gootar signal chain, with no JUCE in sight.
+ * The Gootar signal chain, with no JUCE in it.
  *
  * Keeping the DSP free of the app framework is what lets it be tested
  * headlessly against real .nam files on any platform, including under
  * sanitisers while models are hot-swapped mid-stream. JUCE's only job is audio
  * device I/O and the UI.
  *
- * The implementation is hidden behind a pointer rather than exposed as members
- * for a concrete reason: AudioDSPTools puts its classes in a global `dsp`
- * namespace, JUCE has `juce::dsp`, and JuceHeader.h pulls `juce` into the
- * global scope. Any header that included both would make every mention of
- * `dsp::` ambiguous. Hiding them here means the app never sees AudioDSPTools
- * or Eigen at all — it only needs this file.
+ * The chain is an ordered list of blocks, not a fixed sequence, so adding an
+ * effect or a second model is a list edit rather than a rewrite. The default
+ * ordering is exactly the stock plugin's:
  *
- * Chain order is transcribed from NeuralAmpModeler::ProcessBlock:
+ *   input gain -> gate -> model -> tone stack -> IR -> DC blocker -> output
  *
- *   input gain -> gate TRIGGER -> model -> gate GAIN -> tone stack
- *     -> IR -> 5 Hz DC blocker -> output gain
+ * The implementation is hidden behind a pointer because AudioDSPTools puts its
+ * classes in a global `dsp` namespace, JUCE has juce::dsp, and JuceHeader.h
+ * pulls juce into global scope - any header including both would make every
+ * `dsp::` ambiguous.
  *
  * THREADING
  *   Audio thread : process(), setParams()
- *   Loader thread: stageModel(), stageIR(), collectGarbage()
- * Model and IR handover both go through ModelSwapper, so nothing allocates,
- * blocks or frees on the audio thread.
+ *   Loader thread: prepare(), loadModel(), loadIR(), setChain(),
+ *                  collectGarbage(), analysePitch()
+ * Model, IR and whole-chain handover all go through ModelSwapper, so nothing
+ * allocates, blocks or frees on the audio thread.
  */
 class GootarEngine
 {
@@ -77,11 +92,10 @@ public:
     GootarEngine& operator= (const GootarEngine&) = delete;
 
     /**
-     * [Loader/UI thread] Allocate for a given rate and block size.
+     * [Loader thread] Allocate for a given rate and block size.
      *
-     * Changing the sample rate invalidates every loaded model: NeuralAudio
-     * scales WaveNet dilations at load time only, so models must be reloaded
-     * afterwards. modelNeedsReload() reports when that has happened.
+     * NeuralAudio bakes the sample rate into a model when it loads it, so a
+     * rate change invalidates everything loaded. modelNeedsReload() reports it.
      */
     void prepare (double sampleRate, int maxBlockSize);
 
@@ -98,24 +112,40 @@ public:
 
     // --- loader thread -----------------------------------------------------
 
-    /**
-     * Load a .nam and hand it to the audio thread. The audio thread keeps
-     * playing the old model until it picks the new one up, so this is safe to
-     * call while sound is coming out.
-     */
-    bool stageModel (const std::filesystem::path&, std::string& errorOut);
-    void clearModel();
+    /** Load into a model slot (0 is the only one in the default chain). */
+    bool loadModel (int slot, const std::filesystem::path&, std::string& errorOut);
+    void clearModel (int slot);
 
-    bool stageIR (const std::filesystem::path&, std::string& errorOut);
+    bool loadIR (const std::filesystem::path&, std::string& errorOut);
     void clearIR();
 
-    /** Free models the audio thread has finished with. Loader thread only. */
+    /** Replace the chain layout. Blocks keep their state and loaded models. */
+    void setChain (const std::vector<ChainSlot>&);
+    std::vector<ChainSlot> currentChain() const;
+
+    /** Free anything the audio thread has finished with. Loader thread only. */
     void collectGarbage() noexcept;
 
-    /** True if the rate changed since the current model was loaded. */
     bool modelNeedsReload() const noexcept;
 
-    ModelInfo modelInfo() const;
+    int       numModelSlots() const noexcept;
+    ModelInfo modelInfo (int slot = 0) const;
+    std::string irFileName() const;
+
+    // --- metering and analysis --------------------------------------------
+
+    /** Peak level since the last read, 0..1+. Safe from any thread. */
+    float inputPeak() const noexcept;
+    float outputPeak() const noexcept;
+
+    /**
+     * [Timer/worker thread] Analyse the most recent window of CLEAN input.
+     *
+     * The tap sits before the model on purpose: distortion piles on harmonics
+     * and squashes dynamics, and a pitch tracker fed the amp output reports a
+     * confidently wrong note.
+     */
+    PitchReading analysePitch();
 
 private:
     struct Impl;

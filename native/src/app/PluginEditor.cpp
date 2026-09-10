@@ -1,65 +1,60 @@
 #include "PluginEditor.h"
 
+#include "../dsp/ChainSpec.h"
+
 namespace gootar {
 
 namespace {
-constexpr int kRowHeight = 26;
-constexpr int kPad = 10;
-
-const juce::Colour kBg       { 0xff0e1013 };
-const juce::Colour kPanel    { 0xff171a1f };
-const juce::Colour kLine     { 0xff2a2f38 };
-const juce::Colour kText     { 0xffe6e8ec };
-const juce::Colour kMuted    { 0xff8b93a1 };
-const juce::Colour kAccent   { 0xffff8a3d };
+constexpr int kRowHeight = 34;
+constexpr int kKnobRow = 96;
+constexpr int kSideWidth = 300;
 } // namespace
 
 GootarEditor::GootarEditor (GootarProcessor& p)
     : juce::AudioProcessorEditor (&p), processor (p)
 {
-    auto& lf = getLookAndFeel();
-    lf.setColour (juce::ResizableWindow::backgroundColourId, kBg);
-    lf.setColour (juce::Slider::rotarySliderFillColourId, kAccent);
-    lf.setColour (juce::Slider::thumbColourId, kText);
-    lf.setColour (juce::TextEditor::backgroundColourId, kPanel);
-    lf.setColour (juce::ListBox::backgroundColourId, kPanel);
+    setLookAndFeel (&lookAndFeel);
 
-    addAndMakeVisible (libraryButton);
+    styleButton (libraryButton, true);
     libraryButton.onClick = [this] { chooseLibraryFolder(); };
-
-    addAndMakeVisible (irButton);
+    styleButton (irButton);
     irButton.onClick = [this] { chooseIR(); };
-
-    addAndMakeVisible (clearIRButton);
-    clearIRButton.onClick = [this] { processor.clearIR(); updateStatus(); };
-
-    addAndMakeVisible (savePresetButton);
-    savePresetButton.onClick = [this] { savePreset(); };
-
-    addAndMakeVisible (loadPresetButton);
-    loadPresetButton.onClick = [this] { loadPreset(); };
+    styleButton (clearIRButton);
+    clearIRButton.onClick = [this] { processor.clearIR(); refreshStatus(); };
+    styleButton (saveButton);
+    saveButton.onClick = [this] { savePreset(); };
+    styleButton (loadButton);
+    loadButton.onClick = [this] { loadPreset(); };
 
     addAndMakeVisible (searchBox);
-    searchBox.setTextToShowWhenEmpty ("Filter models...", kMuted);
+    searchBox.setTextToShowWhenEmpty ("Search captures...", theme::textDim);
+    searchBox.setFont (theme::font (14.0f));
     searchBox.onTextChange = [this] { refreshFilter(); };
 
     addAndMakeVisible (modelList);
     modelList.setRowHeight (kRowHeight);
+    modelList.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
 
-    addAndMakeVisible (statusLabel);
-    statusLabel.setColour (juce::Label::textColourId, kMuted);
-    statusLabel.setFont (juce::FontOptions (12.0f));
+    addAndMakeVisible (nowPlaying);
+    nowPlaying.setFont (theme::font (15.0f, true));
+    nowPlaying.setColour (juce::Label::textColourId, theme::accent);
 
-    addAndMakeVisible (nowPlayingLabel);
-    nowPlayingLabel.setColour (juce::Label::textColourId, kAccent);
-    nowPlayingLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    addAndMakeVisible (statusLine);
+    statusLine.setFont (theme::font (11.0f));
+    statusLine.setColour (juce::Label::textColourId, theme::textDim);
 
-    addKnob (inputKnob,  "inputLevelDb",    "Input");
-    addKnob (gateKnob,   "gateThresholdDb", "Gate");
-    addKnob (bassKnob,   "bass",            "Bass");
-    addKnob (midKnob,    "mid",             "Mid");
-    addKnob (trebleKnob, "treble",          "Treble");
-    addKnob (outputKnob, "outputLevelDb",   "Output");
+    addAndMakeVisible (tuner);
+    addAndMakeVisible (chainStrip);
+    addAndMakeVisible (infoPanel);
+    addAndMakeVisible (inputMeter);
+    addAndMakeVisible (outputMeter);
+
+    addKnob (inputKnob,  "inputLevelDb",    "INPUT");
+    addKnob (gateKnob,   "gateThresholdDb", "GATE");
+    addKnob (bassKnob,   "bass",            "BASS");
+    addKnob (midKnob,    "mid",             "MID");
+    addKnob (trebleKnob, "treble",          "TREBLE");
+    addKnob (outputKnob, "outputLevelDb",   "OUTPUT");
 
     addToggle (gateToggle, gateAttach, "gateEnabled", "Gate");
     addToggle (eqToggle,   eqAttach,   "eqEnabled",   "EQ");
@@ -72,30 +67,41 @@ GootarEditor::GootarEditor (GootarProcessor& p)
 
     processor.library().addListener (this);
     refreshFilter();
-    updateStatus();
+    refreshStatus();
+    refreshChainStrip();
+    refreshInfoPanel();
 
     setResizable (true, true);
-    setResizeLimits (720, 520, 1600, 1200);
-    setSize (900, 640);
-    startTimerHz (4);
+    setResizeLimits (860, 600, 1800, 1400);
+    setSize (1000, 720);
+    startTimerHz (20);
 }
 
 GootarEditor::~GootarEditor()
 {
     processor.library().removeListener (this);
+    setLookAndFeel (nullptr);
 }
 
-void GootarEditor::addKnob (KnobAttachment& k, const juce::String& paramID, const juce::String& text)
+void GootarEditor::styleButton (juce::TextButton& b, bool accent)
+{
+    if (accent)
+        b.getProperties().set ("accent", true);
+    addAndMakeVisible (b);
+}
+
+void GootarEditor::addKnob (Knob& k, const juce::String& paramID, const juce::String& caption)
 {
     k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 62, 16);
+    k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 15);
+    k.slider.setColour (juce::Slider::textBoxTextColourId, theme::text);
     addAndMakeVisible (k.slider);
 
-    k.label.setText (text, juce::dontSendNotification);
-    k.label.setJustificationType (juce::Justification::centred);
-    k.label.setColour (juce::Label::textColourId, kMuted);
-    k.label.setFont (juce::FontOptions (11.0f));
-    addAndMakeVisible (k.label);
+    k.caption.setText (caption, juce::dontSendNotification);
+    k.caption.setJustificationType (juce::Justification::centred);
+    k.caption.setFont (theme::font (10.0f, true));
+    k.caption.setColour (juce::Label::textColourId, theme::textDim);
+    addAndMakeVisible (k.caption);
 
     k.attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         processor.state(), paramID, k.slider);
@@ -103,10 +109,9 @@ void GootarEditor::addKnob (KnobAttachment& k, const juce::String& paramID, cons
 
 void GootarEditor::addToggle (juce::ToggleButton& b,
                               std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>& a,
-                              const juce::String& paramID, const juce::String& text)
+                              const juce::String& paramID, const juce::String& caption)
 {
-    b.setButtonText (text);
-    b.setColour (juce::ToggleButton::textColourId, kText);
+    b.setButtonText (caption);
     addAndMakeVisible (b);
     a = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processor.state(), paramID, b);
@@ -114,53 +119,99 @@ void GootarEditor::addToggle (juce::ToggleButton& b,
 
 void GootarEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (kBg);
+    g.fillAll (theme::bg);
 
-    g.setColour (kPanel);
-    g.fillRoundedRectangle (getLocalBounds().removeFromBottom (150).reduced (kPad).toFloat(), 6.0f);
+    g.setColour (theme::text);
+    g.setFont (theme::font (21.0f, true));
+    g.drawText ("Gootar",
+                getLocalBounds().reduced (theme::pad).removeFromTop (40).removeFromLeft (110),
+                juce::Justification::centredLeft, false);
 
-    g.setColour (kText);
-    g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-    g.drawText ("Gootar", kPad, 6, 200, 24, juce::Justification::centredLeft);
+    const auto panel = [&g] (juce::Rectangle<int> r)
+    {
+        if (r.isEmpty())
+            return;
+        g.setColour (theme::surface);
+        g.fillRoundedRectangle (r.toFloat(), (float) theme::radius);
+        g.setColour (theme::line);
+        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), (float) theme::radius, 1.0f);
+    };
+
+    panel (layout.list);
+    panel (layout.tuner);
+    panel (layout.meters);
+    panel (layout.chain);
+    panel (layout.info);
+    panel (layout.knobs);
 }
 
 void GootarEditor::resized()
 {
-    auto area = getLocalBounds().reduced (kPad);
-    area.removeFromTop (28); // title
+    auto bounds = getLocalBounds().reduced (theme::pad);
 
-    auto top = area.removeFromTop (30);
-    libraryButton.setBounds (top.removeFromLeft (130).reduced (2));
-    irButton.setBounds (top.removeFromLeft (110).reduced (2));
-    clearIRButton.setBounds (top.removeFromLeft (80).reduced (2));
-    loadPresetButton.setBounds (top.removeFromRight (110).reduced (2));
-    savePresetButton.setBounds (top.removeFromRight (110).reduced (2));
+    auto header = bounds.removeFromTop (40);
+    header.removeFromLeft (118);
+    const int buttonW = 108;
+    libraryButton.setBounds (header.removeFromLeft (buttonW).reduced (3, 5));
+    irButton.setBounds (header.removeFromLeft (90).reduced (3, 5));
+    clearIRButton.setBounds (header.removeFromLeft (86).reduced (3, 5));
+    loadButton.setBounds (header.removeFromRight (buttonW).reduced (3, 5));
+    saveButton.setBounds (header.removeFromRight (buttonW).reduced (3, 5));
 
-    area.removeFromTop (6);
-    searchBox.setBounds (area.removeFromTop (28));
-    area.removeFromTop (6);
+    bounds.removeFromTop (4);
 
-    auto bottom = area.removeFromBottom (150);
-    statusLabel.setBounds (area.removeFromBottom (20));
-    nowPlayingLabel.setBounds (area.removeFromBottom (22));
-    modelList.setBounds (area);
+    layout.knobs = bounds.removeFromBottom (kKnobRow);
+    bounds.removeFromBottom (theme::pad);
 
-    bottom = bottom.reduced (kPad);
-    auto toggles = bottom.removeFromRight (110);
-    gateToggle.setBounds (toggles.removeFromTop (26));
-    eqToggle.setBounds (toggles.removeFromTop (26));
-    irToggle.setBounds (toggles.removeFromTop (26));
-    toggles.removeFromTop (4);
-    outputModeBox.setBounds (toggles.removeFromTop (26));
+    auto side = bounds.removeFromRight (kSideWidth);
+    bounds.removeFromRight (theme::pad);
+    layout.list = bounds;
 
-    KnobAttachment* knobs[] = { &inputKnob, &gateKnob, &bassKnob, &midKnob, &trebleKnob, &outputKnob };
-    const int n = static_cast<int> (std::size (knobs));
-    const int w = juce::jmax (60, bottom.getWidth() / n);
-    for (auto* k : knobs)
+    layout.tuner = side.removeFromTop (132);
+    side.removeFromTop (theme::pad);
+    layout.meters = side.removeFromTop (74);
+    side.removeFromTop (theme::pad);
+    layout.chain = side.removeFromTop (56);
+    side.removeFromTop (theme::pad);
+    layout.info = side;
+
+    // Contents sit inside their panels, from the same rectangles.
+    auto left = layout.list.reduced (theme::pad);
+    searchBox.setBounds (left.removeFromTop (32));
+    left.removeFromTop (8);
+    statusLine.setBounds (left.removeFromBottom (16));
+    nowPlaying.setBounds (left.removeFromBottom (22));
+    left.removeFromBottom (4);
+    modelList.setBounds (left);
+
+    tuner.setBounds (layout.tuner);
+
+    auto meterArea = layout.meters.reduced (theme::pad, 11);
+    inputMeter.setBounds (meterArea.removeFromTop (meterArea.getHeight() / 2 - 3));
+    meterArea.removeFromTop (6);
+    outputMeter.setBounds (meterArea);
+
+    chainStrip.setBounds (layout.chain);
+    infoPanel.setBounds (layout.info);
+
+    auto knobs = layout.knobs.reduced (theme::pad, 8);
+    auto switches = knobs.removeFromRight (150);
+    gateToggle.setBounds (switches.removeFromTop (24).reduced (0, 1));
+    eqToggle.setBounds (switches.removeFromTop (24).reduced (0, 1));
+    irToggle.setBounds (switches.removeFromTop (24).reduced (0, 1));
+
+    knobs.removeFromRight (theme::pad);
+    outputModeBox.setBounds (knobs.removeFromRight (112).withSizeKeepingCentre (112, 28));
+    knobs.removeFromRight (theme::pad);
+
+    Knob* all[] = { &inputKnob, &gateKnob, &bassKnob, &midKnob, &trebleKnob, &outputKnob };
+    const int count = (int) std::size (all);
+    const int cell = juce::jmax (62, knobs.getWidth() / count);
+    for (auto* k : all)
     {
-        auto cell = bottom.removeFromLeft (w);
-        k->label.setBounds (cell.removeFromTop (14));
-        k->slider.setBounds (cell.reduced (2));
+        auto column = knobs.removeFromLeft (cell);
+        k->caption.setBounds (column.removeFromTop (12));
+        k->slider.setBounds (column.reduced (3, 0));
     }
 }
 
@@ -174,24 +225,39 @@ void GootarEditor::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
         return;
 
     const auto& item = filtered.getReference (row);
-    const bool isCurrent = item.file == processor.currentModelFile();
+    const bool current = item.file == processor.currentModelFile();
 
-    if (selected)
-        g.fillAll (kLine);
-    if (isCurrent)
+    auto bounds = juce::Rectangle<int> (0, 0, w, h).reduced (1, 1);
+
+    if (current)
     {
-        g.setColour (kAccent);
-        g.fillRect (0, 0, 3, h);
+        g.setColour (theme::accentDim);
+        g.fillRoundedRectangle (bounds.toFloat(), 5.0f);
+    }
+    else if (selected)
+    {
+        g.setColour (theme::surfaceHigh);
+        g.fillRoundedRectangle (bounds.toFloat(), 5.0f);
     }
 
-    g.setColour (isCurrent ? kAccent : kText);
-    g.setFont (juce::FontOptions (13.0f));
-    g.drawText (item.fileName, 12, 0, w - 130, h, juce::Justification::centredLeft);
+    auto text = bounds.reduced (10, 0);
 
-    g.setColour (kMuted);
-    g.setFont (juce::FontOptions (11.0f));
-    g.drawText (item.isIR ? "IR" : item.sha256.substring (0, 10),
-                w - 120, 0, 110, h, juce::Justification::centredRight);
+    // Type marker: IRs and captures live in the same list, so they need to be
+    // distinguishable without reading the extension.
+    auto marker = text.removeFromLeft (22);
+    g.setColour (item.isIR ? theme::textDim : (current ? theme::accent : theme::text.withAlpha (0.5f)));
+    g.setFont (theme::font (9.0f, true));
+    g.drawText (item.isIR ? "IR" : "NAM", marker, juce::Justification::centredLeft, false);
+
+    auto right = text.removeFromRight (86);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (10.0f));
+    g.drawText (item.sha256.substring (0, 10), right, juce::Justification::centredRight, false);
+
+    g.setColour (current ? theme::accent : theme::text);
+    g.setFont (theme::font (13.0f, current));
+    g.drawText (item.fileName.upToLastOccurrenceOf (".", false, false),
+                text, juce::Justification::centredLeft, true);
 }
 
 void GootarEditor::auditionRow (int row)
@@ -207,18 +273,15 @@ void GootarEditor::auditionRow (int row)
     else
         processor.requestModel (item.file);
 
-    updateStatus();
+    refreshStatus();
 }
 
-void GootarEditor::listBoxItemClicked (int row, const juce::MouseEvent&)
-{
-    auditionRow (row);
-}
+void GootarEditor::listBoxItemClicked (int row, const juce::MouseEvent&) { auditionRow (row); }
 
 void GootarEditor::selectedRowsChanged (int lastRowSelected)
 {
-    // Keyboard navigation auditions too, so arrowing down the list walks
-    // through models exactly the way clicking does.
+    // Keyboard navigation auditions too, so you can hold a chord and walk the
+    // list with the arrow keys.
     auditionRow (lastRowSelected);
 }
 
@@ -228,15 +291,14 @@ void GootarEditor::refreshFilter()
     filtered.clearQuick();
 
     for (const auto& item : processor.library().getItems())
-    {
-        if (query.isEmpty() || item.fileName.containsIgnoreCase (query)
+        if (query.isEmpty()
+            || item.fileName.containsIgnoreCase (query)
             || item.relPath.containsIgnoreCase (query))
             filtered.add (item);
-    }
 
     modelList.updateContent();
     modelList.repaint();
-    updateStatus();
+    refreshStatus();
 }
 
 void GootarEditor::libraryChanged()
@@ -247,55 +309,141 @@ void GootarEditor::libraryChanged()
 
 void GootarEditor::libraryScanProgress (int done, int total)
 {
-    scanStatus = "scanning " + juce::String (done) + "/" + juce::String (total) + "...";
-    updateStatus();
+    scanStatus = "scanning " + juce::String (done) + "/" + juce::String (total);
+    refreshStatus();
 }
 
 void GootarEditor::timerCallback()
 {
-    updateStatus();
-    modelList.repaint();
+    inputMeter.setLevel (processor.inputPeak());
+    outputMeter.setLevel (processor.outputPeak());
+    tuner.setReading (processor.latestPitch());
+    refreshStatus();
+    refreshChainStrip();
+    refreshInfoPanel();
 }
 
-void GootarEditor::updateStatus()
+void GootarEditor::refreshInfoPanel()
 {
     const auto info = processor.modelInfo();
-    const auto err = processor.lastError();
+    juce::Array<InfoPanel::Row> rows;
 
-    if (err.isNotEmpty())
+    if (info.loaded)
     {
-        nowPlayingLabel.setColour (juce::Label::textColourId, juce::Colour (0xfff87171));
-        nowPlayingLabel.setText (err, juce::dontSendNotification);
+        rows.add (InfoPanel::Row { "architecture",
+                                   info.architecture.empty()
+                                     ? juce::String ("unreported")
+                                     : juce::String (info.architecture) });
+        rows.add (InfoPanel::Row { "trained at",
+                                   juce::String (info.sampleRate, 0) + " Hz" });
+        // A model that falls back to the dynamic path costs noticeably more
+        // CPU, which is worth flagging rather than leaving you to wonder.
+        rows.add (InfoPanel::Row { "runs as",
+                                   info.isStatic ? "static (optimised)"
+                                                 : "dynamic (fallback)",
+                                   ! info.isStatic });
+        if (info.receptiveField > 0)
+            rows.add (InfoPanel::Row { "receptive field",
+                                       juce::String (info.receptiveField) + " samples" });
+    }
+
+    const auto ir = processor.currentIRFile();
+    rows.add (InfoPanel::Row { "cabinet",
+                               ir.existsAsFile() ? ir.getFileName() : juce::String ("none") });
+    rows.add (InfoPanel::Row { "model slots",
+                               juce::String (juce::jmax (1, processor.numModelSlots())) });
+
+    infoPanel.setRows (std::move (rows));
+}
+
+void GootarEditor::refreshChainStrip()
+{
+    juce::Array<ChainStrip::Entry> entries;
+    const auto spec = processor.chainSpec();
+    int modelIndex = 0;
+
+    for (const auto& slot : spec)
+    {
+        ChainStrip::Entry entry;
+        entry.enabled = slot.enabled;
+        entry.loaded = true;
+
+        switch (slot.type)
+        {
+            case BlockType::Gain:
+                entry.label = slot.id == "input" ? "IN" : "OUT";
+                break;
+            case BlockType::Gate:      entry.label = "GATE"; break;
+            case BlockType::ToneStack: entry.label = "TONE"; break;
+            case BlockType::DCBlocker: entry.label = "DC"; break;
+            case BlockType::IR:
+                entry.label = "IR";
+                entry.loaded = processor.currentIRFile().existsAsFile();
+                break;
+            case BlockType::Model:
+                entry.label = "AMP";
+                entry.loaded = processor.modelInfo().loaded;
+                ++modelIndex;
+                break;
+        }
+        entries.add (entry);
+    }
+
+    chainStrip.setEntries (std::move (entries));
+}
+
+void GootarEditor::refreshStatus()
+{
+    const auto info = processor.modelInfo();
+    const auto error = processor.lastError();
+
+    if (error.isNotEmpty())
+    {
+        nowPlaying.setColour (juce::Label::textColourId, theme::bad);
+        nowPlaying.setText (error, juce::dontSendNotification);
     }
     else if (info.loaded)
     {
-        nowPlayingLabel.setColour (juce::Label::textColourId, kAccent);
-        nowPlayingLabel.setText (info.fileName, juce::dontSendNotification);
+        nowPlaying.setColour (juce::Label::textColourId, theme::accent);
+        nowPlaying.setText (juce::String (info.fileName)
+                                .upToLastOccurrenceOf (".", false, false),
+                            juce::dontSendNotification);
     }
     else
     {
-        nowPlayingLabel.setColour (juce::Label::textColourId, kMuted);
-        nowPlayingLabel.setText ("no model loaded - pick one above", juce::dontSendNotification);
+        nowPlaying.setColour (juce::Label::textColourId, theme::textDim);
+        nowPlaying.setText ("no capture loaded - click one above",
+                            juce::dontSendNotification);
     }
 
-    juce::StringArray bits;
+    juce::StringArray parts;
     if (scanStatus.isNotEmpty())
-        bits.add (scanStatus);
-    bits.add (juce::String (filtered.size()) + " of "
-              + juce::String (processor.library().getNumItems()) + " files");
-    if (info.loaded)
-        bits.add (juce::String (info.sampleRate, 0) + " Hz model");
-    const auto ir = processor.currentIRFile();
-    bits.add (ir.existsAsFile() ? "IR: " + ir.getFileName() : "no IR");
+        parts.add (scanStatus);
+    parts.add (juce::String (filtered.size()) + " of "
+                 + juce::String (processor.library().getNumItems()) + " files");
 
-    statusLabel.setText (bits.joinIntoString ("  |  "), juce::dontSendNotification);
+    const auto rate = processor.getSampleRate();
+    if (rate > 0.0)
+    {
+        auto rateText = juce::String (rate / 1000.0, 1) + " kHz";
+        // 48 k is what captures are trained at; anything else is worth saying
+        // out loud, because it is subtly wrong rather than obviously broken.
+        if (std::abs (rate - 48000.0) > 1.0)
+            rateText += " (models expect 48)";
+        parts.add (rateText);
+    }
+
+    const auto ir = processor.currentIRFile();
+    parts.add (ir.existsAsFile() ? "IR: " + ir.getFileName() : "no IR");
+
+    statusLine.setText (parts.joinIntoString ("   ·   "), juce::dontSendNotification);
 }
 
 // --- file actions ----------------------------------------------------------
 
 void GootarEditor::chooseLibraryFolder()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Choose your .nam folder",
+    chooser = std::make_unique<juce::FileChooser> ("Choose your capture folder",
                                                    processor.library().getRoot());
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                             | juce::FileBrowserComponent::canSelectDirectories,
@@ -306,7 +454,7 @@ void GootarEditor::chooseLibraryFolder()
             {
                 scanStatus = "scanning...";
                 processor.library().setRoot (dir);
-                updateStatus();
+                refreshStatus();
             }
         });
 }
@@ -323,7 +471,7 @@ void GootarEditor::chooseIR()
             if (f.existsAsFile())
             {
                 processor.requestIR (f);
-                updateStatus();
+                refreshStatus();
             }
         });
 }
@@ -347,13 +495,13 @@ void GootarEditor::savePreset()
                 juce::NativeMessageBox::showMessageBoxAsync (
                     juce::MessageBoxIconType::WarningIcon, "Could not save preset", err);
             else
-                updateStatus();
+                refreshStatus();
         });
 }
 
 void GootarEditor::loadPreset()
 {
-    chooser = std::make_unique<juce::FileChooser> ("Load preset", juce::File(), "*.json");
+    chooser = std::make_unique<juce::FileChooser> ("Open preset", juce::File(), "*.json");
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                             | juce::FileBrowserComponent::canSelectFiles,
         [this] (const juce::FileChooser& fc)
@@ -366,7 +514,7 @@ void GootarEditor::loadPreset()
             if (! processor.loadPresetFromFile (f, err))
                 juce::NativeMessageBox::showMessageBoxAsync (
                     juce::MessageBoxIconType::WarningIcon, "Preset loaded with problems", err);
-            updateStatus();
+            refreshStatus();
         });
 }
 

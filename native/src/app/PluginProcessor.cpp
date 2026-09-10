@@ -72,8 +72,16 @@ GootarProcessor::GootarProcessor()
       apvts (*this, nullptr, "GOOTAR", makeParameterLayout())
 {
     loader.startThread (juce::Thread::Priority::normal);
-    // Frees models the audio thread has finished with, off the audio thread.
-    startTimer (250);
+
+    // First run: find the captures already on this machine instead of opening
+    // to an empty list. setStateInformation overrides this if a session is
+    // being restored.
+    if (const auto guess = ModelLibrary::guessDefaultRoot(); guess.isDirectory())
+        modelLibrary.setRoot (guess);
+
+    // Drives both the tuner and the periodic freeing of retired models, off
+    // the audio thread.
+    startTimer (60);
 }
 
 GootarProcessor::~GootarProcessor()
@@ -189,7 +197,7 @@ void GootarProcessor::LoaderThread::run()
         if (model.existsAsFile())
         {
             std::string err;
-            const bool ok = owner.engine.stageModel (model.getFullPathName().toStdString(), err);
+            const bool ok = owner.engine.loadModel (0, model.getFullPathName().toStdString(), err);
             const juce::ScopedLock sl (owner.loadLock);
             if (ok)
             {
@@ -211,7 +219,7 @@ void GootarProcessor::LoaderThread::run()
         else if (ir.existsAsFile())
         {
             std::string err;
-            const bool ok = owner.engine.stageIR (ir.getFullPathName().toStdString(), err);
+            const bool ok = owner.engine.loadIR (ir.getFullPathName().toStdString(), err);
             const juce::ScopedLock sl (owner.loadLock);
             if (ok)
             {
@@ -265,6 +273,18 @@ void GootarProcessor::timerCallback()
     // Belt and braces: the loader frees retired models after each request, but
     // a swap can land after the last one, so sweep periodically too.
     engine.collectGarbage();
+
+    // Pitch analysis is a few hundred microseconds of autocorrelation - fine
+    // here, absolutely not on the audio thread.
+    auto reading = engine.analysePitch();
+    const juce::ScopedLock sl (pitchLock);
+    lastPitch = std::move (reading);
+}
+
+PitchReading GootarProcessor::latestPitch() const
+{
+    const juce::ScopedLock sl (pitchLock);
+    return lastPitch;
 }
 
 juce::File GootarProcessor::currentModelFile() const

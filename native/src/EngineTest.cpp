@@ -12,6 +12,7 @@
  * Run under -fsanitize=thread and -fsanitize=address,undefined to check the
  * concurrency claims rather than trust them.
  */
+#include "dsp/ChainSpec.h"
 #include "dsp/GootarEngine.h"
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <numbers>
 #include <numeric>
 #include <string>
 #include <thread>
@@ -46,7 +48,7 @@ std::vector<float> makeSine (int numSamples, double freqHz, float amplitude)
     std::vector<float> out (static_cast<size_t> (numSamples));
     for (int i = 0; i < numSamples; ++i)
         out[static_cast<size_t> (i)] =
-            amplitude * static_cast<float> (std::sin (2.0 * M_PI * freqHz * i / kSampleRate));
+            amplitude * static_cast<float> (std::sin (2.0 * std::numbers::pi * freqHz * i / kSampleRate));
     return out;
 }
 
@@ -248,7 +250,7 @@ void testEachBundledModel()
         engine.setParams (flatParams());
 
         std::string err;
-        if (! engine.stageModel (path, err))
+        if (! engine.loadModel (0, path, err))
         {
             check (false, path.filename().string() + " loads (" + err + ")");
             continue;
@@ -294,7 +296,7 @@ void testHotSwapUnderLoad()
     engine.setParams (flatParams());
 
     std::string err;
-    engine.stageModel (models[0], err);
+    engine.loadModel (0, models[0], err);
 
     std::atomic<bool> stop { false };
     std::atomic<long long> blocks { 0 };
@@ -321,7 +323,7 @@ void testHotSwapUnderLoad()
         {
             const auto& path = models[static_cast<size_t> (round) % models.size()];
             std::string loadErr;
-            if (engine.stageModel (path, loadErr))
+            if (engine.loadModel (0, path, loadErr))
                 swapsRequested.fetch_add (1);
             engine.collectGarbage();
             std::this_thread::sleep_for (std::chrono::milliseconds (2));
@@ -343,6 +345,146 @@ void testHotSwapUnderLoad()
     check (! sawNonFinite.load(), "no NaN or inf reached the output");
 }
 
+
+void testPitchDetection()
+{
+    std::printf ("\npitch detection (tuner)\n");
+
+    // Real note frequencies in standard tuning, low to high.
+    struct Case { double hz; const char* name; };
+    const Case cases[] = {
+        {  82.41, "E2" },   // 6th string, open
+        { 110.00, "A2" },   // 5th
+        { 146.83, "D3" },   // 4th
+        { 196.00, "G3" },   // 3rd
+        { 246.94, "B3" },   // 2nd
+        { 329.63, "E4" },   // 1st
+    };
+
+    for (const auto& c : cases)
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+
+        // A pure sine is the easy case; a guitar is harmonically rich, which
+        // MPM handles better than plain autocorrelation. This at least proves
+        // the plumbing, the window size and the note maths.
+        const auto tone = makeSine (kBlock * 200, c.hz, 0.3f);
+        runBlocks (engine, tone);
+
+        const auto reading = engine.analysePitch();
+        const bool ok = reading.voiced
+                     && reading.noteName == c.name
+                     && std::abs (reading.cents) < 15.0;
+
+        check (ok, std::string (c.name) + " at " + std::to_string ((int) c.hz)
+                     + " Hz reads back correctly");
+        if (! ok)
+            std::printf ("      got voiced=%d note=%s cents=%.1f freq=%.2f\n",
+                         (int) reading.voiced, reading.noteName.c_str(),
+                         reading.cents, reading.frequencyHz);
+    }
+
+    // Silence must not produce a confident reading, or the tuner flickers
+    // between notes whenever you stop playing.
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+        const std::vector<float> silence (kBlock * 200, 0.0f);
+        runBlocks (engine, silence);
+        check (! engine.analysePitch().voiced, "silence reads as unvoiced");
+    }
+
+    // A detuned string should report the offset, not snap to the note.
+    {
+        gootar::GootarEngine engine;
+        engine.prepare (kSampleRate, kBlock);
+        engine.setParams (flatParams());
+        // 110 Hz * 2^(30/1200) = ~111.9 Hz, i.e. 30 cents sharp of A2.
+        const auto sharp = makeSine (kBlock * 200, 110.0 * std::pow (2.0, 30.0 / 1200.0), 0.3f);
+        runBlocks (engine, sharp);
+        const auto reading = engine.analysePitch();
+        const bool ok = reading.voiced && reading.noteName == "A2"
+                     && reading.cents > 20.0 && reading.cents < 40.0;
+        check (ok, "30 cents sharp reads as sharp, not as A2 in tune");
+        if (! ok)
+            std::printf ("      got note=%s cents=%.1f\n",
+                         reading.noteName.c_str(), reading.cents);
+    }
+}
+
+void testChainEditing()
+{
+    std::printf ("\nchain editing\n");
+
+    const auto models = findModels();
+    if (models.empty())
+    {
+        check (false, "need a model to test chain edits");
+        return;
+    }
+
+    gootar::GootarEngine engine;
+    engine.prepare (kSampleRate, kBlock);
+    engine.setParams (flatParams());
+
+    std::string err;
+    check (engine.loadModel (0, models[0], err), "loads a model into slot 0");
+
+    // Force the audio thread to pick the chain up.
+    const auto tone = makeSine (kBlock * 20, 220.0, 0.2f);
+    runBlocks (engine, tone);
+    check (engine.modelInfo (0).loaded, "slot 0 reports the model");
+
+    // Reorder: move the tone stack before the model. The model must survive,
+    // because rebuilding a chain must not cost you what is loaded in it.
+    auto spec = engine.currentChain();
+    auto toneIt = std::find_if (spec.begin(), spec.end(),
+        [] (const gootar::ChainSlot& s) { return s.id == "tone"; });
+    auto modelIt = std::find_if (spec.begin(), spec.end(),
+        [] (const gootar::ChainSlot& s) { return s.id == "model-1"; });
+    check (toneIt != spec.end() && modelIt != spec.end(), "standard chain has tone and model");
+
+    if (toneIt != spec.end() && modelIt != spec.end())
+    {
+        std::iter_swap (toneIt, modelIt);
+        engine.setChain (spec);
+        const auto out = runBlocks (engine, tone);
+        engine.collectGarbage();
+
+        check (engine.modelInfo (0).loaded, "model survives a chain reorder");
+        check (allFinite (out), "reordered chain still produces finite audio");
+        check (rms (out, kBlock * 4) > 1e-6, "reordered chain still produces audio");
+    }
+
+    // Add a second model slot: this is what "pedal into amp" needs, and it
+    // must not require a preset format change.
+    //
+    // Inserted at index 2 it lands EARLIER in the chain than model-1, so it
+    // becomes slot 0 - slot indices follow signal order, not creation order.
+    // That is the contract the UI and preset loader both depend on, so pin it.
+    spec.insert (spec.begin() + 2, { gootar::BlockType::Model, "model-2", true });
+    engine.setChain (spec);
+    runBlocks (engine, tone);
+    check (engine.numModelSlots() == 2, "a second model slot can be added");
+    check (engine.modelInfo (1).loaded,
+           "the original model is now slot 1, and kept its capture");
+    check (! engine.modelInfo (0).loaded, "the newly inserted slot 0 starts empty");
+
+    if (models.size() > 1)
+    {
+        check (engine.loadModel (0, models[1], err), "loads a capture into the new slot 0");
+        const auto out = runBlocks (engine, tone);
+        engine.collectGarbage();
+        check (allFinite (out) && rms (out, kBlock * 4) > 1e-6,
+               "two models in series produce finite audio");
+        check (engine.modelInfo (0).loaded && engine.modelInfo (1).loaded,
+               "both slots report loaded");
+    }
+}
+
 } // namespace
 
 int main()
@@ -356,6 +498,8 @@ int main()
     testNoiseGate();
     testEachBundledModel();
     testHotSwapUnderLoad();
+    testPitchDetection();
+    testChainEditing();
 
     std::printf ("\n%s\n", failures == 0 ? "ALL PASSED" : "FAILURES PRESENT");
     return failures == 0 ? 0 : 1;
